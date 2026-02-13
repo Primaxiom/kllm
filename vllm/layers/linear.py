@@ -22,18 +22,61 @@ class Linear(nn.Module):
         .weight_loader  = self.weight_loader
     else:
       self.register_parameter("bias", None)
-    
-  def forward(self, x: tensor) -> tensor:
-    raise NotImplementedError("未实现 Linear::forward()")
   
   def weight_loader(self, param: nn.Parameter, loaded_weight: tensor):
     raise NotImplementedError("未实现 Linear::weight_loader()")
+    
+  def forward(self, x: tensor) -> tensor:
+    raise NotImplementedError("未实现 Linear::forward()")
 
 class RowParallelLinear(Linear):
-  pass
+  def __init__(
+      self,
+      input_size:   int,
+      output_size:  int,
+      bias:         bool = False,
+  ):
+    tp_size = dist.get_world_size()
+    assert input_size % tp_size == 0, "input_size 必须能被 tp_size 整除"
+    super().__init__(input_size // tp_size, output_size, bias, tp_dim=1)
+
+  def weight_loader(self, param: nn.Parameter, loaded_weight: tensor):
+    param_data    = param.data
+    shard_size    = param_data.size(1)
+    total_size    = loaded_weight.size(1)
+    assert shard_size * self.tp_size == total_size, "加载的权重形状错误"
+    start_index   = self.tp_rank * shard_size
+    sliced_weight = loaded_weight.narrow(1, start_index, shard_size)
+    param_data.copy_(sliced_weight)
+
+  def forward(self, x: tensor) -> tensor:
+    result = nn.functional.linear(x, self.weight, self.bias)
+    if self.tp_size > 1:
+      dist.all_reduce(result, op=dist.ReduceOp.SUM)
+    return result
 
 class ColumnParallelLinear(Linear):
-  pass
+  def __init__(
+      self,
+      input_size:   int,
+      output_size:  int,
+      bias:         bool = False,
+  ):
+    tp_size = dist.get_world_size()
+    assert output_size % tp_size == 0, "output_size 必须能被 tp_size 整除"
+    super().__init__(input_size, output_size // tp_size, bias, tp_dim=0)
+  
+  def weight_loader(self, param: nn.Parameter, loaded_weight: tensor):
+    param_data    = param.data
+    shard_size    = param_data.size(0)
+    total_size    = loaded_weight.size(0)
+    assert shard_size * self.tp_size == total_size, "加载的权重形状错误"
+    start_index   = self.tp_rank * shard_size
+    sliced_weight = loaded_weight.narrow(0, start_index, shard_size)
+    param_data.copy_(sliced_weight)
+
+  def forward(self, x: tensor) -> tensor:
+    return nn.functional.linear(x, self.weight, self.bias)
 
 class MergedColumnParallelLinear(ColumnParallelLinear):
   pass
