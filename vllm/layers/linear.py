@@ -9,7 +9,7 @@ class Linear(nn.Module):
       bias:         bool        = False,
       tp_dim:       int | None  = None,
   ):
-    super.__init__()
+    super().__init__()
     self.tp_dim         = tp_dim
     self.tp_rank        = dist.get_rank()
     self.tp_size        = dist.get_world_size()
@@ -90,9 +90,9 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
 
   def weight_loader(
     self, 
-    param: nn.Parameter, 
-    loaded_weight: tensor, 
-    loaded_shard_id: int
+    param:            nn.Parameter, 
+    loaded_weight:    tensor, 
+    loaded_shard_id:  int
   ):
     shard_offset  = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
     shard_size    = self.output_sizes[loaded_shard_id] // self.tp_size
@@ -102,7 +102,56 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
     param_data.copy_(sliced_weight)
 
 class QKVColumnParallelLinear(ColumnParallelLinear):
-  pass
+  def __init__(
+    self,
+    input_size:   int, 
+    head_size:    int,
+    num_heads:    int,
+    num_kv_heads: int | None  = None,
+    bias:         bool        = False
+  ):
+    self.tp_size      = dist.get_world_size()
+    if num_kv_heads is None: num_kv_heads = num_heads
+    assert num_heads    % self.tp_size == 0, "num_heads 必须能被 tp_size 整除"
+    assert num_kv_heads % self.tp_size == 0, "num_kv_heads 必须能被 tp_size 整除"
+    self.num_heads    = num_heads     // self.tp_size
+    self.num_kv_heads = num_kv_heads  // self.tp_size
+    self.head_size    = head_size
+    output_size       = head_size * (num_heads + 2 * num_kv_heads)
+    self.output_size  = output_size // self.tp_size
+    super().__init__(input_size, output_size, bias)
+
+  def weight_loader(
+    self, 
+    param_data:       nn.Parameter, 
+    loaded_weight:    tensor, 
+    loaded_weight_id: str
+  ):
+    assert loaded_weight_id in ["q", "k", "v"]
+    if    loaded_weight_id == "q":
+      shard_offset  = 0
+      shard_size    = self.head_size * self.num_heads
+    elif  loaded_weight_id == "k":
+      shard_offset  = self.head_size * self.num_heads
+      shard_size    = self.head_size * self.num_kv_heads
+    elif  loaded_weight_id == "v":
+      shard_offset  = self.head_size * (self.num_heads + self.num_kv_heads)
+      shard_size    = self.head_size * self.num_kv_heads
+    else:
+      raise ValueError(f"loaded_weight_id 有误: {loaded_weight_id}")
+    
+    param_data    = param_data.narrow(0, shard_offset, shard_size)
+    start_index   = self.tp_rank * shard_size
+    shared_weight = loaded_weight.narrow(0, start_index, shard_size)
+    param_data.copy_(shared_weight)
 
 if __name__ == "__main__":
-  pass
+  if dist.is_available() and not dist.is_initialized():
+    dist.init_process_group(
+        backend="gloo",
+        init_method="tcp://localhost:29500",
+        rank=0,
+        world_size=1,
+    )
+  layer = Linear(input_size=10, output_size=5)
+  print("Linear layer initialized:", layer)
