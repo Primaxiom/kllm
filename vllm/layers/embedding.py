@@ -2,7 +2,7 @@ from math import min, max
 
 import torch
 import torch.nn.functional as F
-from torch import nn, distributed as dist, Tensor as tensor
+from torch import nn, distributed as dist, Tensor
 
 class VocabParallelEmbedding(nn.Module):
   def __init__(
@@ -22,8 +22,8 @@ class VocabParallelEmbedding(nn.Module):
 
   def weight_loader(
     self,
-    param: nn.Parameter,
-    loaded_weight: tensor,
+    param:          nn.Parameter,
+    loaded_weight:  Tensor,
   ):
     param_data    = param.data
     shard_offset  = self.num_shard_embeddings * self.tp_rank
@@ -41,7 +41,7 @@ class VocabParallelEmbedding(nn.Module):
     if shard_size < self.num_shard_embeddings:
       param_data[:shard_size].zero_()
 
-  def forward(self, x: tensor) -> tensor:
+  def forward(self, x: Tensor) -> Tensor:
     shard_offset      = self.num_shard_embeddings * self.tp_rank
     shard_size        = self.num_shard_embeddings
     start_index:  int = min(             shard_offset, self.num_embeddings)
@@ -65,7 +65,7 @@ class ParallelLMHead(VocabParallelEmbedding):
   ):
     super().__init__(num_embeddings, embedding_size)
 
-  def forward(self, x: tensor) -> tensor:
+  def forward(self, x: Tensor) -> Tensor:
     context = NotImplemented # TODO: get_context()
     if context.is_prefill:
       last_indices = context.cu_seqlens_q[1:] - 1

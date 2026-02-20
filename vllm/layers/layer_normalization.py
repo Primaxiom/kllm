@@ -1,8 +1,8 @@
 import torch
-from torch import Tensor as tensor, nn
+from torch import Tensor, nn
 
 class LayerNormalization(nn.Module):
-  def __init__(self, hidden_size_or_gamma: int | tensor, eps: float = 1e-5):
+  def __init__(self, hidden_size_or_gamma: int | Tensor, eps: float = 1e-5):
     super().__init__()
     self.weight = nn.Parameter(torch.ones(hidden_size_or_gamma) if isinstance(hidden_size_or_gamma, int) else hidden_size_or_gamma)
     self.eps = eps
@@ -11,16 +11,16 @@ class LayerNormalization(nn.Module):
   def gamma(self):
     return self.weight
   
-  def rms_forward(self, x: tensor) -> tensor:
+  def rms_forward(self, x: Tensor) -> Tensor:
     # RMSNorm(x) = (x / sqrt(mean(x²) + ε)) ⊙ γ
     variance = x.pow(2).mean(dim=-1, keepdim=True) + self.eps
     return x * torch.rsqrt(variance) * self.weight
 
-  def residual_rms_forward(self, x: tensor, residual: tensor) -> tensor:
+  def residual_rms_forward(self, x: Tensor, residual: Tensor) -> Tensor:
     x += residual
     return self.rms_forward(x), x
 
-  def forward(self, x: tensor, residual: tensor | None = None) -> tensor | tuple[tensor, tensor]:
+  def forward(self, x: Tensor, residual: Tensor | None = None) -> Tensor | tuple[Tensor, Tensor]:
     return self.rms_forward(x) if residual is None else self.residual_rms_forward(x, residual)
 
 if __name__ == "__main__":

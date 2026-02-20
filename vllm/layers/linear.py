@@ -1,5 +1,5 @@
 import torch
-from torch import nn, distributed as dist, Tensor as tensor
+from torch import nn, distributed as dist, Tensor
 
 class Linear(nn.Module):
   def __init__(
@@ -23,10 +23,10 @@ class Linear(nn.Module):
     else:
       self.register_parameter("bias", None)
   
-  def weight_loader(self, param: nn.Parameter, loaded_weight: tensor):
+  def weight_loader(self, param: nn.Parameter, loaded_weight: Tensor):
     raise NotImplementedError("未实现 Linear::weight_loader()")
     
-  def forward(self, x: tensor) -> tensor:
+  def forward(self, x: Tensor) -> Tensor:
     raise NotImplementedError("未实现 Linear::forward()")
 
 class RowParallelLinear(Linear):
@@ -40,7 +40,7 @@ class RowParallelLinear(Linear):
     assert input_size % tp_size == 0, "input_size 必须能被 tp_size 整除"
     super().__init__(input_size // tp_size, output_size, bias, tp_dim=1)
 
-  def weight_loader(self, param: nn.Parameter, loaded_weight: tensor):
+  def weight_loader(self, param: nn.Parameter, loaded_weight: Tensor):
     param_data    = param.data
     shard_size    = param_data.size(1)
     total_size    = loaded_weight.size(1)
@@ -49,7 +49,7 @@ class RowParallelLinear(Linear):
     sliced_weight = loaded_weight.narrow(1, start_index, shard_size)
     param_data.copy_(sliced_weight)
 
-  def forward(self, x: tensor) -> tensor:
+  def forward(self, x: Tensor) -> Tensor:
     result = nn.functional.linear(x, self.weight, self.bias)
     if self.tp_size > 1:
       dist.all_reduce(result, op=dist.ReduceOp.SUM)
@@ -66,7 +66,7 @@ class ColumnParallelLinear(Linear):
     assert output_size % tp_size == 0, "output_size 必须能被 tp_size 整除"
     super().__init__(input_size, output_size // tp_size, bias, tp_dim=0)
   
-  def weight_loader(self, param: nn.Parameter, loaded_weight: tensor):
+  def weight_loader(self, param: nn.Parameter, loaded_weight: Tensor):
     param_data    = param.data
     shard_size    = param_data.size(0)
     total_size    = loaded_weight.size(0)
@@ -75,7 +75,7 @@ class ColumnParallelLinear(Linear):
     sliced_weight = loaded_weight.narrow(0, start_index, shard_size)
     param_data.copy_(sliced_weight)
 
-  def forward(self, x: tensor) -> tensor:
+  def forward(self, x: Tensor) -> Tensor:
     return nn.functional.linear(x, self.weight, self.bias)
 
 class MergedColumnParallelLinear(ColumnParallelLinear):
@@ -91,7 +91,7 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
   def weight_loader(
     self, 
     param:            nn.Parameter, 
-    loaded_weight:    tensor, 
+    loaded_weight:    Tensor, 
     loaded_shard_id:  int
   ):
     shard_offset  = sum(self.output_sizes[:loaded_shard_id]) // self.tp_size
@@ -124,7 +124,7 @@ class QKVColumnParallelLinear(ColumnParallelLinear):
   def weight_loader(
     self, 
     param_data:       nn.Parameter, 
-    loaded_weight:    tensor, 
+    loaded_weight:    Tensor, 
     loaded_weight_id: str
   ):
     assert loaded_weight_id in ["q", "k", "v"]
