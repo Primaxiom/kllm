@@ -2,6 +2,16 @@ import torch
 from torch import nn, distributed as dist, Tensor
 
 class Linear(nn.Module):
+  '''
+并行线性层
+tp:           tensor parallel, 张量并行
+  dimension:  对张量进行切分的维度 (切分后分配至不同设备进行并行)
+  rank:       当前设备在并行组中的编号
+  size:       设备总数
+weight:       权重, 形状总是为 (out, in)
+bias:         偏置, 可选
+子类必须实现前向函数和所有参数的加载器
+'''
   def __init__(
       self,
       input_size:   int,
@@ -30,6 +40,12 @@ class Linear(nn.Module):
     raise NotImplementedError("未实现 Linear::forward()")
 
 class RowParallelLinear(Linear):
+  '''
+行并行线性层
+按行切分矩阵, tp_dim 为 1
+输入向量的每 input_size // tp_size 维经切分矩阵进行变换, 
+得到 tp_size 个 output_size 维的输出向量, 相加即为最终结果
+'''
   def __init__(
       self,
       input_size:   int,
@@ -56,6 +72,12 @@ class RowParallelLinear(Linear):
     return result
 
 class ColumnParallelLinear(Linear):
+  '''
+列并行线性层
+按列切分矩阵, tp_dim 为 0
+输入向量经形状为 (output_size // tp_size , input_size) 的切分矩阵进行变换, 
+得到 tp_size 个 output_size // tp_size 维的输出向量, 拼接即为最终结果
+'''
   def __init__(
       self,
       input_size:   int,
@@ -79,6 +101,10 @@ class ColumnParallelLinear(Linear):
     return nn.functional.linear(x, self.weight, self.bias)
 
 class MergedColumnParallelLinear(ColumnParallelLinear):
+  '''
+合并列并行线性层
+支持对多个 input_size 相同的矩阵拼接后的矩阵进行列并行
+'''
   def __init__(
       self,
       input_size:   int,
@@ -102,6 +128,10 @@ class MergedColumnParallelLinear(ColumnParallelLinear):
     param_data.copy_(sliced_weight)
 
 class QKVColumnParallelLinear(ColumnParallelLinear):
+  '''
+QKV 列并行线性层
+一种为 Attention 机制特化的合并列并行线性层
+'''
   def __init__(
     self,
     input_size:   int, 

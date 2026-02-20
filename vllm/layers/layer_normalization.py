@@ -2,6 +2,12 @@ import torch
 from torch import Tensor, nn
 
 class LayerNormalization(nn.Module):
+  '''
+RMS Layer Normalization
+一个带有残差功能的均方根归一化层
+RMSNorm(x) = (x / sqrt(mean(x²) + ε)) ⊙ γ
+'''
+
   def __init__(self, hidden_size_or_gamma: int | Tensor, eps: float = 1e-5):
     super().__init__()
     self.weight = nn.Parameter(torch.ones(hidden_size_or_gamma) if isinstance(hidden_size_or_gamma, int) else hidden_size_or_gamma)

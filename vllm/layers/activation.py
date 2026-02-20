@@ -3,6 +3,12 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 
 class SiluAndMul(nn.Module):
+  '''
+Qwen3 MLP 模块中 Silu 和矩阵乘法的结合算子
+输入: 门控层和上采样层的输出拼接后的张量, 这两个输出张量的形状是相同的
+前向: 将输入平分, 代入公式
+输出: 待进行下采样的张量
+'''
 
   def __init__(self):
     super().__init__()
