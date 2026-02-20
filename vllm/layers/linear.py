@@ -123,7 +123,7 @@ class QKVColumnParallelLinear(ColumnParallelLinear):
 
   def weight_loader(
     self, 
-    param_data:       nn.Parameter, 
+    param:            nn.Parameter, 
     loaded_weight:    Tensor, 
     loaded_weight_id: str
   ):
@@ -140,7 +140,7 @@ class QKVColumnParallelLinear(ColumnParallelLinear):
     else:
       raise ValueError(f"loaded_weight_id 有误: {loaded_weight_id}")
     
-    param_data    = param_data.narrow(0, shard_offset, shard_size)
+    param_data    = param.data.narrow(0, shard_offset, shard_size)
     start_index   = self.tp_rank * shard_size
     shared_weight = loaded_weight.narrow(0, start_index, shard_size)
     param_data.copy_(shared_weight)
