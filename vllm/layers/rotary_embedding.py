@@ -1,3 +1,4 @@
+from functools import lru_cache
 import torch
 from torch import nn, Tensor
 
@@ -38,3 +39,12 @@ class RotaryEmbedding(nn.Module):
     qry = apply_rotary_emb(qry, cos, sin)
     key = apply_rotary_emb(key, cos, sin)
     return qry, key
+
+@lru_cache(1)
+def get_rope(
+    base:           float,
+    embedding_dim:  int,
+    max_position:   int = 2048,
+):
+  rotary_embedding = RotaryEmbedding(base, embedding_dim, max_position)
+  return rotary_embedding
