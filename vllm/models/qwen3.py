@@ -7,6 +7,7 @@ from vllm.layers.linear import MergedColumnParallelLinear, RowParallelLinear, QK
 from vllm.layers.layer_normalization import LayerNormalization
 from vllm.layers.rotary_embedding import get_rope
 from vllm.layers.attention import Attention
+from vllm.layers.embedding import VocabParallelEmbedding, ParallelLMHead
 
 class Qwen3MLP(nn.Module):
   def __init__(
@@ -145,3 +146,44 @@ class Qwen3DecoderLayer(nn.Module):
     x, residual = self.rms_layernorm(x, residual)
     x           = self.mlp(x)
     return x
+
+class Qwen3Model(nn.Module):
+  def __init__(
+    self,
+    cfg:  Qwen3Config
+  ):
+    super().__init__()
+    self.embedding  = VocabParallelEmbedding(cfg.vocab_size, cfg.hidden_size)
+    self.layers     = nn.ModuleList([Qwen3DecoderLayer(cfg) for _ in range(cfg.num_hidden_layers)])
+    self.rms_norm   = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
+    
+  def forward(
+    self,
+    input_ids: Tensor,
+    positions: Tensor,
+  ) -> Tensor:
+    x, residual = self.embedding(input_ids), None
+    for layer in self.layers: x, residual = layer(x, positions, residual)
+    x, residual = self.rms_norm(x, residual)
+    return x
+  
+class Qwen3ForCausalLM(nn.Module):
+  def __init__(
+    self,
+    cfg:  Qwen3Config
+  ):
+    super().__init__()
+    self.model    = Qwen3Model(cfg)
+    self.lm_head  = ParallelLMHead(cfg.vocab_size, cfg.hidden_size)
+    if cfg.tie_word_embeddings:
+      self.lm_head.weight.data = self.model.embedding.weight.data
+
+  def forward(
+    self,
+    input_ids: Tensor,
+    positions: Tensor,
+  ) -> Tensor:
+    return self.model(input_ids, positions)
+  
+  def compute_logits(self, x: Tensor) -> Tensor:
+    return self.lm_head(x)
