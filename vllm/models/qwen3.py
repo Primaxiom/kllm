@@ -1,8 +1,11 @@
 import torch
-from torch import nn, Tensor
+from torch import nn, Tensor, distributed as dist
 
 from vllm.layers.activation import SiluAndMul
-from vllm.layers.linear import MergedColumnParallelLinear, RowParallelLinear
+from vllm.layers.linear import MergedColumnParallelLinear, RowParallelLinear, QKVColumnParallelLinear
+from vllm.layers.layer_normalization import LayerNormalization
+from vllm.layers.rotary_embedding import get_rope
+from vllm.layers.attention import Attention
 
 class Qwen3MLP(nn.Module):
   def __init__(
@@ -27,3 +30,83 @@ class Qwen3MLP(nn.Module):
     x = self.down(x)
     return x
   
+class Qwen3Attention(nn.Module):
+  def __init__(
+    self,
+    hidden_size:  int,
+    num_heads:    int,
+    num_kv_heads: int | None = None,
+    scale:        float | None = None,
+    qkv_bias:     bool = False,
+    rms_norm_eps: float = 1e-06,
+    rope_theta:   float = 10000,
+    max_position: int = 128 * 1024,
+  ):
+    super().__init__()
+
+    tp_size                 = dist.get_world_size()
+    self.total_num_heads    = num_heads
+    self.total_num_kv_heads = num_kv_heads if num_kv_heads else num_heads
+
+    assert hidden_size              % num_heads               == 0
+    assert num_heads                % self.total_num_kv_heads == 0
+    assert self.total_num_kv_heads  % tp_size                 == 0
+
+    self.head_dim     = hidden_size             // num_heads
+    self.num_heads    = self.total_num_heads    // tp_size
+    self.num_kv_heads = self.total_num_kv_heads // tp_size
+
+    self.scale        = scale if scale else self.head_dim ** -0.5
+    self.q_size       = self.head_dim * self.total_num_heads
+    self.kv_size      = self.head_dim * self.total_num_kv_heads
+    self.qkv_bias     = qkv_bias
+
+    self.qkv          = QKVColumnParallelLinear(
+      input_size      = hidden_size,
+      head_size       = self.head_dim,
+      num_heads       = self.total_num_heads,
+      num_kv_heads    = self.total_num_kv_heads,
+      bias            = self.qkv_bias
+    )
+
+    if not qkv_bias:
+      self.q_norm     = LayerNormalization(self.head_dim, rms_norm_eps)
+      self.k_norm     = LayerNormalization(self.head_dim, rms_norm_eps)
+
+    self.rotary_emb   = get_rope(
+      base            = rope_theta,
+      embedding_dim   = self.head_dim,
+      max_position    = max_position,
+    )
+
+    self.attention    = Attention(
+      num_heads       = self.total_num_heads, 
+      head_dim        = self.head_dim, 
+      scale           = self.scale, 
+      num_kv_heads    = self.total_num_kv_heads,
+    )
+
+    self.o            = RowParallelLinear(
+      input_size      = hidden_size,
+      output_size     = hidden_size
+    )
+
+  def forward(
+    self,
+    x:    Tensor,
+    pos:  Tensor,
+  ):
+    qkv: Tensor = self.qkv(x)
+    q, k, v     = qkv.split([self.q_size, self.kv_size, self.kv_size], -1)
+    q           = q.view(-1, self.num_heads   , self.head_dim)
+    k           = k.view(-1, self.num_kv_heads, self.head_dim)
+    v           = v.view(-1, self.num_kv_heads, self.head_dim)
+
+    if not self.qkv_bias:
+      q, k      = self.q_norm(q), self.k_norm(k)
+
+    q, k  = self.rotary_emb(pos, q, k)
+    o     = self.attention(q, k, v)
+    o     = self.o(o)
+
+    return o
