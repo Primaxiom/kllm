@@ -1,5 +1,6 @@
 import torch
 from torch import nn, Tensor, distributed as dist
+from transformers import Qwen3Config
 
 from vllm.layers.activation import SiluAndMul
 from vllm.layers.linear import MergedColumnParallelLinear, RowParallelLinear, QKVColumnParallelLinear
@@ -110,3 +111,37 @@ class Qwen3Attention(nn.Module):
     o     = self.o(o)
 
     return o
+
+class Qwen3DecoderLayer(nn.Module):
+  def __init__(
+    self,
+    cfg:  Qwen3Config
+  ):
+    super().__init__()
+    self.rms_layernorm  = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
+    self.gqa            = Qwen3Attention(
+      cfg.hidden_size,
+      cfg.num_attention_heads,
+      cfg.num_key_value_heads,
+      None,
+      cfg.attention_bias,
+      cfg.rms_norm_eps,
+      cfg.rope_theta,
+      cfg.max_position_embeddings,
+    )
+    self.mlp            = Qwen3MLP(
+      cfg.hidden_size,
+      cfg.intermediate_size,
+    )
+  
+  def forward(
+    self, 
+    x:        Tensor,
+    pos:      Tensor,
+    residual: Tensor | None = None,
+  ) -> tuple[Tensor, Tensor]:
+    x, residual = self.rms_layernorm(x, residual) if residual else self.rms_layernorm(x), x
+    x           = self.gqa(x, pos)
+    x, residual = self.rms_layernorm(x, residual)
+    x           = self.mlp(x)
+    return x
