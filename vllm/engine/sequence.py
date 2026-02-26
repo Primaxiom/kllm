@@ -10,6 +10,23 @@ class SequenceStatus(Enum):
   FINISHED  = auto()
 
 class Sequence:
+  '''
+序列
+存储一个推理任务的全部信息 (提示词 token, 生成的 token, 序列状态等)
+
+block_size: 分页 KV Cache 中的页大小, 定义了每个内存块可以存储的 token 数量
+counter:    用于保证序列 id 唯一的计数器
+
+seq_id:     序列 id
+status:     序列状态
+
+token_ids:          推理任务的所有 token (提示词 token 和生成的 token)
+last_token:         token_ids[-1]
+num_tokens:         len(token_ids)
+num_prompt_tokens:  提示词 token 的数量
+num_cached_tokens:  已缓存 token 的数量
+block_table:        分页 KV Cache 中的页表, 逻辑块到物理块的映射
+'''
   block_size: int   = 256
   counter:    count = count()
 
@@ -21,7 +38,7 @@ class Sequence:
     self.seq_id = next(Sequence.counter)
     self.status = SequenceStatus.WAITING
 
-    self.token_ids          = copy(token_ids)
+    self.token_ids          = copy(token_ids) # 必须深拷贝, 保证不影响外部数据
     self.last_token         = token_ids[-1] if token_ids else None
     self.num_tokens         = len(token_ids)
     self.num_prompt_tokens  = len(token_ids)
