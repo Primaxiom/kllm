@@ -1,5 +1,3 @@
-from math import min, max
-
 import torch
 import torch.nn.functional as F
 from torch import nn, distributed as dist, Tensor

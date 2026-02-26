@@ -1,3 +1,7 @@
+if __name__ == "__main__":
+  import sys, pathlib
+  sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
+
 import torch
 from torch import nn, Tensor, distributed as dist
 from transformers import Qwen3Config
@@ -187,3 +191,26 @@ class Qwen3ForCausalLM(nn.Module):
   
   def compute_logits(self, x: Tensor) -> Tensor:
     return self.lm_head(x)
+
+if __name__ == "__main__":
+  if not dist.is_initialized():
+    dist.init_process_group(
+      backend="gloo", 
+      init_method="tcp://127.0.0.1:29500?use_libuv=False",
+      rank=0,
+      world_size=1,
+    )
+  cfg = Qwen3Config(
+    vocab_size=50257,
+    hidden_size=768,
+    intermediate_size=3072,
+    num_hidden_layers=2,
+    num_attention_heads=12,
+    num_key_value_heads=12,
+    head_dim=64,
+  )
+  model = Qwen3ForCausalLM(cfg)
+  model = model.cuda()
+  input_ids = torch.randint(0, 50257, (16,)).cuda()
+  positions = torch.arange(16).cuda()
+  output = model(input_ids, positions)
