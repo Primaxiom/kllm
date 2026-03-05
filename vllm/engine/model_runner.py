@@ -11,6 +11,7 @@ from vllm.models.qwen3 import Qwen3ForCausalLM
 from vllm.utils.loader import load_model
 from vllm.layers.sampler import Sampler
 from vllm.engine.sequence import Sequence
+from vllm.utils.context import set_context, reset_context
 
 class ModelRunner:
   def __init__(
@@ -145,6 +146,48 @@ class ModelRunner:
         module.v_cache = self.kv_cache[1, layer_id]
         layer_id      += 1
 
-
+  @torch.inference_mode()
   def capture_cudagraph(self):
-    pass
+    config          = self.config
+    hf_config       = config.hf_config
+    max_batch_size  = min(config.max_num_seqs, 512)
+    max_num_blocks  = (config.max_model_len + self.block_size - 1) // self.block_size
+
+    input_ids       = torch.zeros(max_batch_size, dtype=torch.int64)
+    positions       = torch.zeros(max_batch_size, dtype=torch.int64)
+    slot_mapping    = torch.zeros(max_batch_size, dtype=torch.int32)
+    context_lens    = torch.zeros(max_batch_size, dtype=torch.int32)
+    block_tables    = torch.zeros(max_batch_size, max_num_blocks, dtype=torch.int32)
+    outputs         = torch.zeros(max_batch_size, hf_config.hidden_size)
+
+    self.graph_batch_size = [1, 2, 4, 8] + list(range(16, max_batch_size + 1, 16))
+    self.graphs           = {}
+    self.graph_pool       = None
+
+    for batch_size in reversed(self.graph_batch_size):
+      graph = torch.cuda.CUDAGraph()
+      set_context(
+        False, 
+        slot_mapping=slot_mapping[ : batch_size], 
+        context_lens=context_lens[ : batch_size], 
+        block_tables=block_tables[ : batch_size], 
+      )
+
+      outputs[ : batch_size] = self.model(input_ids[ : batch_size], positions[ : batch_size])
+      with torch.cuda.graph(graph, self.graph_pool):
+        outputs[ : batch_size] = self.model(input_ids[ : batch_size], positions[ : batch_size])
+      if self.graph_pool is None:
+        self.graph_pool = graph.pool()
+      self.graphs[batch_size] = graph
+
+      torch.cuda.synchronize()
+      reset_context()
+
+    self.graph_vars = dict(
+      input_ids     = input_ids,
+      positions     = positions,
+      slot_mapping  = slot_mapping,
+      context_lens  = context_lens,
+      block_tables  = block_tables,
+      outputs       = outputs,
+    )
