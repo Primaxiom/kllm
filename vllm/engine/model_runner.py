@@ -5,15 +5,16 @@ import torch.distributed as dist
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 
-# from vllm.config import Config
+from vllm.config import Config
 from vllm.models.qwen3 import Qwen3ForCausalLM
-# from nanovllm.utils.loader import load_model
-# from vllm.layers.sampler import Sampler
+from vllm.utils.loader import load_model
+from vllm.layers.sampler import Sampler
+from vllm.engine.sequence import Sequence
 
 class ModelRunner:
   def __init__(
     self, 
-    config: Config,  # TODO: Config 类
+    config: Config,
     rank: int, 
     event: Event | list[Event]
   ):
@@ -32,8 +33,8 @@ class ModelRunner:
     torch.set_default_device("cuda")
 
     self.model = Qwen3ForCausalLM(hf_config)
-    load_model(self.model, config.model) # TODO: load_model 函数
-    self.sampler = Sampler() # TODO: Sampler 类
+    load_model(self.model, config.model)
+    self.sampler = Sampler()
     self.warmup_model()
     self.allocate_kv_cache()
     if not self.enforce_eager:
@@ -98,8 +99,18 @@ class ModelRunner:
         self.exit()
         return  
 
-  def warmup_model(self):
+  def run(self):
     pass
+
+  def warmup_model(self):
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    max_num_batched_tokens  =     self.config.max_num_batched_tokens
+    max_model_len           =     self.config.max_model_len
+    num_seqs                = min(self.config.max_num_seqs, max_num_batched_tokens // max_model_len)
+    seqs                    = [Sequence([0] * max_model_len) for _ in range(num_seqs)]
+    self.run(seqs, True)
+    torch.cuda.empty_cache()
 
   def allocate_kv_cache(self):
     pass
