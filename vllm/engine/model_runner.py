@@ -1,3 +1,4 @@
+import math
 import pickle
 
 import torch
@@ -113,7 +114,37 @@ class ModelRunner:
     torch.cuda.empty_cache()
 
   def allocate_kv_cache(self):
-    pass
+    config                  = self.config
+    hf_config               = config.hf_config
+
+    free_mem, total_mem     = torch.cuda.mem_get_info()
+    used_mem                = total_mem - free_mem
+    total_mem              *= config.gpu_memory_utilization
+    torch_peak_used_mem     = torch.cuda.memory_stats()["allocated_bytes.all.peak"]
+    torch_current_used_mem  = torch.cuda.memory_stats()["allocated_bytes.all.current"]
+    available_mem           = total_mem - used_mem - (torch_peak_used_mem - torch_current_used_mem)
+
+    kv_cache_shape          = [
+      2,
+      hf_config.num_hidden_layers,
+      1,
+      self.block_size,
+      hf_config.num_key_value_heads // self.world_size,
+      getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
+    ]
+
+    config.num_kvcache_blocks = int(available_mem) // (math.prod(kv_cache_shape) * hf_config.torch_dtype.itemsize)
+    assert config.num_kvcache_blocks >= 1, f"rank {self.rank} 上的显存空间少于 1 个 KVCache 块所需的空间"
+    kv_cache_shape[2]         = config.num_kvcache_blocks
+    self.kv_cache             = torch.empty(*kv_cache_shape)
+
+    layer_id = 0
+    for module in self.model.modules():
+      if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
+        module.k_cache = self.kv_cache[0, layer_id]
+        module.v_cache = self.kv_cache[1, layer_id]
+        layer_id      += 1
+
 
   def capture_cudagraph(self):
     pass
