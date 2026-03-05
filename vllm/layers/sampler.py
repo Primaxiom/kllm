@@ -2,6 +2,9 @@ import torch
 from torch import nn, Tensor
 
 class Sampler(nn.Module):
+  '''
+使用 Gumbel-Softmax 实现可微分离散采样
+'''
   def __init__(self):
     super().__init__()
 
