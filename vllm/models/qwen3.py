@@ -20,20 +20,20 @@ class Qwen3MLP(nn.Module):
     intermediate_size:  int,
   ):
     super().__init__()
-    self.gate_up    = MergedColumnParallelLinear(
-      input_size    = hidden_size,
-      output_sizes  = [intermediate_size] * 2,
+    self.gate_up_proj = MergedColumnParallelLinear(
+      input_size      = hidden_size,
+      output_sizes    = [intermediate_size] * 2,
     )
-    self.act_fn     = SiluAndMul()
-    self.down       = RowParallelLinear(
-      input_size    = intermediate_size,
-      output_size   = hidden_size
+    self.act_fn       = SiluAndMul()
+    self.down_proj    = RowParallelLinear(
+      input_size      = intermediate_size,
+      output_size     = hidden_size
     )
   
   def forward(self, x: Tensor) -> Tensor:
-    x = self.gate_up(x)
+    x = self.gate_up_proj(x)  
     x = self.act_fn(x)
-    x = self.down(x)
+    x = self.down_proj(x)
     return x
   
 class Qwen3Attention(nn.Module):
@@ -67,7 +67,7 @@ class Qwen3Attention(nn.Module):
     self.kv_size      = self.head_dim * self.total_num_kv_heads
     self.qkv_bias     = qkv_bias
 
-    self.qkv          = QKVColumnParallelLinear(
+    self.qkv_proj     = QKVColumnParallelLinear(
       input_size      = hidden_size,
       head_size       = self.head_dim,
       num_heads       = self.total_num_heads,
@@ -92,7 +92,7 @@ class Qwen3Attention(nn.Module):
       num_kv_heads    = self.total_num_kv_heads,
     )
 
-    self.o            = RowParallelLinear(
+    self.o_proj       = RowParallelLinear(
       input_size      = hidden_size,
       output_size     = hidden_size
     )
@@ -102,18 +102,18 @@ class Qwen3Attention(nn.Module):
     x:    Tensor,
     pos:  Tensor,
   ):
-    qkv: Tensor = self.qkv(x)
+    qkv: Tensor = self.qkv_proj(x)
     q, k, v     = qkv.split([self.q_size, self.kv_size, self.kv_size], -1)
-    q           = q.view(-1, self.num_heads   , self.head_dim)
-    k           = k.view(-1, self.num_kv_heads, self.head_dim)
-    v           = v.view(-1, self.num_kv_heads, self.head_dim)
+    q_proj      = q.view(-1, self.num_heads   , self.head_dim)
+    k_proj      = k.view(-1, self.num_kv_heads, self.head_dim)
+    v_proj      = v.view(-1, self.num_kv_heads, self.head_dim)
 
     if not self.qkv_bias:
-      q, k      = self.q_norm(q), self.k_norm(k)
+      q_proj, k_proj = self.q_norm(q_proj), self.k_norm(k_proj)
 
-    q, k  = self.rotary_emb(pos, q, k)
-    o     = self.attention(q, k, v)
-    o     = self.o(o)
+    q_proj, k_proj   = self.rotary_emb(pos, q_proj, k_proj)
+    o     = self.attention(q_proj, k_proj, v_proj)
+    o     = self.o_proj(o)
 
     return o
 
@@ -123,8 +123,8 @@ class Qwen3DecoderLayer(nn.Module):
     cfg:  Qwen3Config
   ):
     super().__init__()
-    self.rms_layernorm  = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
-    self.gqa            = Qwen3Attention(
+    self.input_layernorm  = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
+    self.self_attn        = Qwen3Attention(
       cfg.hidden_size,
       cfg.num_attention_heads,
       cfg.num_key_value_heads,
@@ -138,6 +138,7 @@ class Qwen3DecoderLayer(nn.Module):
       cfg.hidden_size,
       cfg.intermediate_size,
     )
+    self.post_attention_layernorm = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
   
   def forward(
     self, 
@@ -145,9 +146,9 @@ class Qwen3DecoderLayer(nn.Module):
     pos:      Tensor,
     residual: Tensor | None = None,
   ) -> tuple[Tensor, Tensor]:
-    x, residual = self.rms_layernorm(x, residual) if residual else self.rms_layernorm(x), x
-    x           = self.gqa(x, pos)
-    x, residual = self.rms_layernorm(x, residual)
+    x, residual = self.input_layernorm(x, residual) if residual else self.input_layernorm(x), x
+    x           = self.self_attn(x, pos)
+    x, residual = self.post_attention_layernorm(x, residual)
     x           = self.mlp(x)
     return x
 
@@ -157,21 +158,29 @@ class Qwen3Model(nn.Module):
     cfg:  Qwen3Config
   ):
     super().__init__()
-    self.embedding  = VocabParallelEmbedding(cfg.vocab_size, cfg.hidden_size)
-    self.layers     = nn.ModuleList([Qwen3DecoderLayer(cfg) for _ in range(cfg.num_hidden_layers)])
-    self.rms_norm   = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
+    self.embed_tokens   = VocabParallelEmbedding(cfg.vocab_size, cfg.hidden_size)
+    self.layers         = nn.ModuleList([Qwen3DecoderLayer(cfg) for _ in range(cfg.num_hidden_layers)])
+    self.norm           = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
     
   def forward(
     self,
     input_ids: Tensor,
     positions: Tensor,
   ) -> Tensor:
-    x, residual = self.embedding(input_ids), None
+    x, residual = self.embed_tokens(input_ids), None
     for layer in self.layers: x, residual = layer(x, positions, residual)
-    x, residual = self.rms_norm(x, residual)
+    x, residual = self.norm(x, residual)
     return x
   
 class Qwen3ForCausalLM(nn.Module):
+  packed_modules_mapping: dict[str, tuple[str, int | str]] = {
+    "q_proj": ("qkv_proj", "q"),
+    "k_proj": ("qkv_proj", "k"),
+    "v_proj": ("qkv_proj", "v"),
+    "gate_proj": ("gate_up_proj", 0),
+    "up_proj": ("gate_up_proj", 1),
+  }
+
   def __init__(
     self,
     cfg:  Qwen3Config
@@ -180,7 +189,7 @@ class Qwen3ForCausalLM(nn.Module):
     self.model    = Qwen3Model(cfg)
     self.lm_head  = ParallelLMHead(cfg.vocab_size, cfg.hidden_size)
     if cfg.tie_word_embeddings:
-      self.lm_head.weight.data = self.model.embedding.weight.data
+      self.lm_head.weight.data = self.model.embed_tokens.weight.data
 
   def forward(
     self,
