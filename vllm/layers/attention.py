@@ -4,6 +4,8 @@ import triton
 import triton.language as tl
 from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 
+from vllm.utils.context import get_context
+
 @triton.jit
 def store_kvcache_kernel(
   key_ptr,
@@ -75,7 +77,7 @@ class Attention(nn.Module):
       k: Tensor,
       v: Tensor,
   ):
-    context = None # TODO: get_context()
+    context = get_context()
     k_cache, v_cache = self.k_cache, self.v_cache
     assert context and context.slot_mapping
     if  k_cache.numel() > 0 and v_cache.numel() > 0:

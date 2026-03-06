@@ -3,7 +3,7 @@ import pickle
 
 import torch
 import torch.distributed as dist
-from torch import Tensor
+from torch import cuda, Tensor
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 
@@ -30,7 +30,7 @@ class ModelRunner:
     self.event = event
     
     dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
-    torch.cuda.set_device(rank)
+    cuda.set_device(rank)
     default_dtype = torch.get_default_dtype()
     torch.set_default_dtype(hf_config.torch_dtype)
     torch.set_default_device("cuda")
@@ -82,7 +82,7 @@ class ModelRunner:
         self.shm.unlink()
     if not self.enforce_eager:
       del self.graphs, self.graph_pool
-    torch.cuda.synchronize()
+    cuda.synchronize()
     dist.destroy_process_group()
 
   def call(self, method_name, *args):
@@ -203,24 +203,24 @@ class ModelRunner:
     return token_ids
 
   def warmup_model(self):
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
+    cuda.empty_cache()
+    cuda.reset_peak_memory_stats()
     max_num_batched_tokens  =     self.config.max_num_batched_tokens
     max_model_len           =     self.config.max_model_len
     num_seqs                = min(self.config.max_num_seqs, max_num_batched_tokens // max_model_len)
     seqs                    = [Sequence([0] * max_model_len) for _ in range(num_seqs)]
     self.run(seqs, True)
-    torch.cuda.empty_cache()
+    cuda.empty_cache()
 
   def allocate_kv_cache(self):
     config                  = self.config
     hf_config               = config.hf_config
 
-    free_mem, total_mem     = torch.cuda.mem_get_info()
+    free_mem, total_mem     = cuda.mem_get_info()
     used_mem                = total_mem - free_mem
     total_mem              *= config.gpu_memory_utilization
-    torch_peak_used_mem     = torch.cuda.memory_stats()["allocated_bytes.all.peak"]
-    torch_current_used_mem  = torch.cuda.memory_stats()["allocated_bytes.all.current"]
+    torch_peak_used_mem     = cuda.memory_stats()["allocated_bytes.all.peak"]
+    torch_current_used_mem  = cuda.memory_stats()["allocated_bytes.all.current"]
     available_mem           = total_mem - used_mem - (torch_peak_used_mem - torch_current_used_mem)
 
     kv_cache_shape          = [
@@ -263,7 +263,7 @@ class ModelRunner:
     self.graph_pool       = None
 
     for batch_size in reversed(self.graph_batch_size):
-      graph = torch.cuda.CUDAGraph()
+      graph = cuda.CUDAGraph()
       set_context(
         False, 
         slot_mapping=slot_mapping[ : batch_size], 
@@ -272,13 +272,13 @@ class ModelRunner:
       )
 
       outputs[ : batch_size] = self.model(input_ids[ : batch_size], positions[ : batch_size])
-      with torch.cuda.graph(graph, self.graph_pool):
+      with cuda.graph(graph, self.graph_pool):
         outputs[ : batch_size] = self.model(input_ids[ : batch_size], positions[ : batch_size])
       if self.graph_pool is None:
         self.graph_pool = graph.pool()
       self.graphs[batch_size] = graph
 
-      torch.cuda.synchronize()
+      cuda.synchronize()
       reset_context()
 
     self.graph_vars = dict(
