@@ -6,6 +6,7 @@ import atexit
 
 import torch.multiprocessing as mp
 from transformers import AutoTokenizer
+from tqdm import tqdm
 
 from vllm.config import Config
 from vllm.engine.model_runner import ModelRunner
@@ -49,12 +50,43 @@ class LLMEngine:
   def is_finished(self):
     return self.scheduler.is_finished()
 
-  def step(self):
-    pass
+  def step(self) -> tuple[list[tuple[int, list[int]]], int, bool]:
+    seqs, is_prefill  = self.scheduler.schedule()
+    token_ids         = self.model_runner.call("run", seqs, is_prefill)
+    self.scheduler.postprocess(seqs, token_ids)
+    outputs           = [(seq.seq_id, seq.completion_token_ids) for seq in seqs]
+    num_tokens        = sum(len(seq) for seq in seqs) if is_prefill else len(seqs)
+    return outputs, num_tokens, is_prefill
 
   def generate(
     self,
     prompts:          list[str]       | list[list[int]],
     sampling_params:  SamplingParams  | list[SamplingParams],
+    use_tqdm: bool = True,
   ) -> list[str]:
-    pass
+    if use_tqdm:
+      process_bar = tqdm(total=len(prompts), desc="生成中", dynamic_ncols=True)
+    if not isinstance(sampling_params, list):
+      sampling_params = [sampling_params] * len(prompts)
+    for prompt, params in zip(prompts, sampling_params):
+      self.add_request(prompt, params)
+    
+    outputs: dict[int, list[int]] = {}
+    while not self.is_finished():
+      step_outputs, num_tokens, is_prefill = self.step()
+      for seq_id, token_ids in step_outputs:
+        outputs[seq_id] = token_ids
+        if use_tqdm:
+          process_bar.update(1)
+
+    outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
+    outputs = [
+      {
+        "text": self.tokenizer.decode(token_ids),
+        "token_ids": token_ids,
+      }
+      for token_ids in outputs
+    ]
+    if use_tqdm:
+      process_bar.close()
+    return outputs
