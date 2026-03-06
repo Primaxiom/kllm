@@ -3,6 +3,7 @@ from dataclasses import fields
 from multiprocessing.synchronize import Event
 from multiprocessing.context import SpawnProcess
 import atexit
+from time import perf_counter
 
 import torch.multiprocessing as mp
 from transformers import AutoTokenizer
@@ -72,8 +73,18 @@ class LLMEngine:
       self.add_request(prompt, params)
     
     outputs: dict[int, list[int]] = {}
+    throughput: list[float]       = [.0, .0]
     while not self.is_finished():
+      start = perf_counter()
       step_outputs, num_tokens, is_prefill = self.step()
+      if use_tqdm:
+        end = perf_counter()
+        throughput[is_prefill] = num_tokens / (end - start)
+        process_bar.set_postfix({
+            "Prefill": f"{int(throughput[1])}tok/s",
+            "Decode" : f"{int(throughput[0])}tok/s",
+        })
+
       for seq_id, token_ids in step_outputs:
         outputs[seq_id] = token_ids
         if use_tqdm:
