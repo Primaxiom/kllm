@@ -50,10 +50,10 @@ block_table:        分页 KV Cache 中的页表, 逻辑块到物理块的映射
     self.ignore_eos   = sampling_params.ignore_eos
 
   def __len__(self):
-    self.num_tokens
+    return self.num_tokens
 
   def __getitem__(self, i: int):
-    self.token_ids[i]
+    return self.token_ids[i]
 
   @property
   def is_finished(self):

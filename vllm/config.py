@@ -17,7 +17,7 @@ class Config:
   num_kvcache_blocks: int = -1
 
   def __post_init__(self):
-    assert os.path.isdir(self.model), f"模型路径 (\"{self.model}\") 不是一个有效路径"
+    # assert os.path.isdir(self.model), f"模型路径 (\"{self.model}\") 不是一个有效路径"
     assert self.kvcache_block_size % 256 == 0, f"kvcache_block_size ({self.kvcache_block_size}) 无法被 256 整除"
     assert 1 <= self.tensor_parallel_size <= 8, f"tensor_parallel_size ({self.tensor_parallel_size}) 的值域应当为 [1, 8]"
     self.hf_config = AutoConfig.from_pretrained(self.model)
