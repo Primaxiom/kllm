@@ -3,6 +3,7 @@ import pickle
 
 import torch
 import torch.distributed as dist
+from torch import Tensor
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 
@@ -101,8 +102,35 @@ class ModelRunner:
         self.exit()
         return  
 
-  def run(self):
+  def prepare_block_tables(self, seqs: list[Sequence]) -> Tensor:
     pass
+
+  def prepare_prefill(self, seqs: list[Sequence]) -> tuple[Tensor, Tensor]:
+    pass
+
+  def prepare_decode(self, seqs: list[Sequence]) -> tuple[Tensor, Tensor]:
+    pass
+
+  def prepare_sample(self, seqs: list[Sequence]) -> Tensor:
+    pass
+
+  def run_model(
+    self, 
+    input_ids: Tensor, 
+    positions: Tensor, 
+    is_prefill: bool
+  ) -> Tensor:
+    pass
+
+  def run(self, seqs: list[Sequence], is_prefill: bool) -> list[int]:
+    input_ids, positions  = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
+    logits                = self.run_model(input_ids, positions, is_prefill)
+    token_ids             = None
+    if self.rank == 0:
+      temperatures  = self.prepare_sample(seqs)
+      token_ids     = self.sampler(logits, temperatures)
+    reset_context()
+    return token_ids
 
   def warmup_model(self):
     torch.cuda.empty_cache()
