@@ -7,6 +7,7 @@ from vllm.engine.block_manager import BlockManager
 class Scheduler:
   def __init__(self, cfg: Config):
     self.eos                            = cfg.eos
+    self.max_model_len                  = cfg.max_model_len
     self.max_num_seqs                   = cfg.max_num_seqs
     self.max_num_batched_tokens         = cfg.max_num_batched_tokens
     self.block_manager                  = BlockManager(cfg.num_kvcache_blocks, cfg.kvcache_block_size)
@@ -58,8 +59,15 @@ class Scheduler:
         self.block_manager.may_append(seq)
     assert scheduled_seqs, "无任何序列可调度"
     self.running_seqs.appendleft(reversed(scheduled_seqs))
-    
+
     return scheduled_seqs, False
 
-  def postprocess(self, seqs: list[Sequence], token_ids: list[int]) -> list[bool]:
-    pass
+  def postprocess(self, seqs: list[Sequence], token_ids: list[int]):
+    for seq, token_id in zip(seqs, token_ids):
+      seq.append_token(token_id)
+      if not seq.ignore_eos and token_id == self.eos \
+          or seq.num_completion_tokens >= seq.max_tokens \
+          or seq.num_completion_tokens >= self.max_model_len:
+        seq.status = SequenceStatus.FINISHED
+        self.block_manager.deallocate(seq)
+        self.running_seqs.remove(seq)
