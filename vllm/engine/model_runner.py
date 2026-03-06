@@ -12,7 +12,7 @@ from vllm.models.qwen3 import Qwen3ForCausalLM
 from vllm.utils.loader import load_model
 from vllm.layers.sampler import Sampler
 from vllm.engine.sequence import Sequence
-from vllm.utils.context import set_context, reset_context
+from vllm.utils.context import set_context, reset_context, get_context
 
 class ModelRunner:
   def __init__(
@@ -169,13 +169,28 @@ class ModelRunner:
     temperatures = torch.tensor(temperatures, dtype=torch.float32, pin_memory=True).cuda(non_blocking=True)
     return temperatures
 
+  @torch.inference_mode()
   def run_model(
     self, 
     input_ids: Tensor, 
     positions: Tensor, 
     is_prefill: bool
   ) -> Tensor:
-    pass
+    batch_size  = input_ids.size(0)
+    if is_prefill or self.enforce_eager or batch_size > 512:
+      return self.model.compute_logits(self.model(input_ids, positions))
+    context     = get_context()
+    graph       = self.graphs[next(bs for bs in self.graph_batch_size if bs >= batch_size)]
+    graph_vars  = self.graph_vars
+    graph_vars["input_ids"]   [ : batch_size] = input_ids
+    graph_vars["positions"]   [ : batch_size] = positions
+    graph_vars["slot_mapping"].fill_(-1)
+    graph_vars["slot_mapping"][ : batch_size] = context.slot_mapping
+    graph_vars["context_lens"].zero_()
+    graph_vars["context_lens"][ : batch_size] = context.context_lens
+    graph_vars["block_tables"][ : batch_size, : context.block_tables.size(1)] = context.block_tables
+    graph.replay()
+    return self.model.compute_logits(graph_vars["outputs"][ : batch_size])
 
   def run(self, seqs: list[Sequence], is_prefill: bool) -> list[int]:
     input_ids, positions  = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
