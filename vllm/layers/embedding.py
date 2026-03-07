@@ -2,6 +2,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn, distributed as dist, Tensor
 
+from vllm.utils.context import get_context
+
 class VocabParallelEmbedding(nn.Module):
   '''
 并行词嵌入层
@@ -49,7 +51,7 @@ num_shard_embeddings:           切分后的词表长度
       param_data[:shard_size].copy_(sharded_weight)
 
     if shard_size < self.num_shard_embeddings:
-      param_data[:shard_size].zero_()
+      param_data[shard_size:].zero_()
 
   '''
 输入: token 序列 (一个整数张量)
@@ -90,7 +92,7 @@ class ParallelLMHead(VocabParallelEmbedding):
     super().__init__(num_embeddings, embedding_size)
 
   def forward(self, x: Tensor) -> Tensor:
-    context = NotImplemented # TODO: get_context()
+    context = get_context()
     if context.is_prefill:
       last_indices = context.cu_seqlens_q[1:] - 1
       x = x[last_indices].contiguous()

@@ -79,7 +79,7 @@ class Attention(nn.Module):
   ):
     context = get_context()
     k_cache, v_cache = self.k_cache, self.v_cache
-    assert context and context.slot_mapping
+    assert context and (context.slot_mapping is not None)
     if  k_cache.numel() > 0 and v_cache.numel() > 0:
       store_kvcache(k, v, k_cache, v_cache, context.slot_mapping)
     

@@ -42,6 +42,7 @@ class Qwen3Attention(nn.Module):
     hidden_size:  int,
     num_heads:    int,
     num_kv_heads: int | None = None,
+    head_dim:     int | None = None,
     scale:        float | None = None,
     qkv_bias:     bool = False,
     rms_norm_eps: float = 1e-06,
@@ -58,13 +59,13 @@ class Qwen3Attention(nn.Module):
     assert num_heads                % self.total_num_kv_heads == 0
     assert self.total_num_kv_heads  % tp_size                 == 0
 
-    self.head_dim     = hidden_size             // num_heads
+    self.head_dim     = head_dim or hidden_size // num_heads
     self.num_heads    = self.total_num_heads    // tp_size
     self.num_kv_heads = self.total_num_kv_heads // tp_size
 
     self.scale        = scale if scale else self.head_dim ** -0.5
-    self.q_size       = self.head_dim * self.total_num_heads
-    self.kv_size      = self.head_dim * self.total_num_kv_heads
+    self.q_size       = self.head_dim * self.num_heads
+    self.kv_size      = self.head_dim * self.num_kv_heads
     self.qkv_bias     = qkv_bias
 
     self.qkv_proj     = QKVColumnParallelLinear(
@@ -93,8 +94,8 @@ class Qwen3Attention(nn.Module):
     )
 
     self.o_proj       = RowParallelLinear(
-      input_size      = hidden_size,
-      output_size     = hidden_size
+      input_size      = self.total_num_heads * self.head_dim,
+      output_size     = hidden_size,
     )
 
   def forward(
@@ -113,7 +114,7 @@ class Qwen3Attention(nn.Module):
 
     q_proj, k_proj   = self.rotary_emb(pos, q_proj, k_proj)
     o     = self.attention(q_proj, k_proj, v_proj)
-    o     = self.o_proj(o)
+    o     = self.o_proj(o.flatten(1, -1))
 
     return o
 
@@ -128,10 +129,11 @@ class Qwen3DecoderLayer(nn.Module):
       cfg.hidden_size,
       cfg.num_attention_heads,
       cfg.num_key_value_heads,
+      cfg.head_dim,
       None,
       cfg.attention_bias,
       cfg.rms_norm_eps,
-      cfg.rope_theta,
+      cfg.rope_theta if hasattr(cfg, "rope_theta") else cfg.rope_parameters["rope_theta"],
       cfg.max_position_embeddings,
     )
     self.mlp            = Qwen3MLP(
@@ -146,11 +148,11 @@ class Qwen3DecoderLayer(nn.Module):
     pos:      Tensor,
     residual: Tensor | None = None,
   ) -> tuple[Tensor, Tensor]:
-    x, residual = self.input_layernorm(x, residual) if residual else self.input_layernorm(x), x
+    x, residual = self.input_layernorm(x, residual) if residual is not None else (self.input_layernorm(x), x)
     x           = self.self_attn(x, pos)
     x, residual = self.post_attention_layernorm(x, residual)
     x           = self.mlp(x)
-    return x
+    return x, residual
 
 class Qwen3Model(nn.Module):
   def __init__(

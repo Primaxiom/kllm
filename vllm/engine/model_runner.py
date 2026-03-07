@@ -104,7 +104,7 @@ class ModelRunner:
 
   def prepare_block_tables(self, seqs: list[Sequence]) -> Tensor:
     max_len       = max(len(seq.block_table) for seq in seqs)
-    block_tables  = [seq.block_table + [-1] * (max_len - len(seq)) for seq in seqs]
+    block_tables  = [seq.block_table + [-1] * (max_len - len(seq.block_table)) for seq in seqs]
     block_tables  = torch.tensor(block_tables, dtype=torch.int32, pin_memory=True).cuda(non_blocking=True)
     return block_tables
 
@@ -198,7 +198,7 @@ class ModelRunner:
     token_ids             = None
     if self.rank == 0:
       temperatures  = self.prepare_sample(seqs)
-      token_ids     = self.sampler(logits, temperatures)
+      token_ids     = self.sampler(logits, temperatures).tolist()
     reset_context()
     return token_ids
 
@@ -232,7 +232,7 @@ class ModelRunner:
       getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
     ]
 
-    config.num_kvcache_blocks = int(available_mem) // (math.prod(kv_cache_shape) * hf_config.torch_dtype.itemsize)
+    config.num_kvcache_blocks = int(available_mem) // (math.prod(kv_cache_shape) * hf_config.dtype.itemsize)
     assert config.num_kvcache_blocks >= 1, f"rank {self.rank} 上的显存空间少于 1 个 KVCache 块所需的空间"
     kv_cache_shape[2]         = config.num_kvcache_blocks
     self.kv_cache             = torch.empty(*kv_cache_shape)

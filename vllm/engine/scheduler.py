@@ -58,7 +58,7 @@ class Scheduler:
         scheduled_seqs.append(seq)
         self.block_manager.may_append(seq)
     assert scheduled_seqs, "无任何序列可调度"
-    self.running_seqs.appendleft(reversed(scheduled_seqs))
+    self.running_seqs.extendleft(reversed(scheduled_seqs))
 
     return scheduled_seqs, False
 
