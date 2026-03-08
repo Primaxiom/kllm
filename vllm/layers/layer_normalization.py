@@ -17,11 +17,13 @@ RMSNorm(x) = (x / sqrt(mean(x²) + ε)) ⊙ γ
   def gamma(self):
     return self.weight
   
+  @torch.compile(dynamic=True)
   def rms_forward(self, x: Tensor) -> Tensor:
     # RMSNorm(x) = (x / sqrt(mean(x²) + ε)) ⊙ γ
     variance = x.pow(2).mean(dim=-1, keepdim=True) + self.eps
     return x * torch.rsqrt(variance) * self.weight
 
+  @torch.compile(dynamic=True)
   def residual_rms_forward(self, x: Tensor, residual: Tensor) -> Tensor:
     x += residual
     return self.rms_forward(x), x

@@ -13,6 +13,7 @@ Qwen3 MLP 模块中 Silu 和矩阵乘法的结合算子
   def __init__(self):
     super().__init__()
 
+  @torch.compile
   def forward(self, x: Tensor) -> Tensor:
     x, y = x.chunk(2, -1)
     return F.silu(x) * y
