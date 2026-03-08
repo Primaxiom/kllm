@@ -10,7 +10,7 @@ def apply_rotary_emb(
   x1, x2  = torch.chunk(x, 2, -1)
   y1      = x1 * cos - x2 * sin
   y2      = x1 * sin + x2 * cos
-  return torch.cat((y1, y2), -1)
+  return torch.cat((y1, y2), -1).to(x.dtype)
 
 class RotaryEmbedding(nn.Module):
   def __init__(
@@ -29,6 +29,7 @@ class RotaryEmbedding(nn.Module):
     self.register_buffer("cos_sin_cache", cache, persistent=False)
     self.embedding_dim = embedding_dim
 
+  @torch.compile
   def forward(
     self,
     pos:  Tensor,

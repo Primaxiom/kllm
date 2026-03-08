@@ -182,12 +182,12 @@ decode 阶段使用的空间分配函数, 有新 token 时调用,
       assert last_block.hash != -1, f"内存块 {last_physical_block_id} 在完整时仍未计算哈希值"
       physical_block_id = self.free_block_ids[0]
       self._allocate_block(physical_block_id)
-      seq.block_table.append(physical_block_id)
+      block_table.append(physical_block_id)
 
     elif len(seq) % self.block_size == 0:
       assert last_block.hash == -1, f"内存块 {last_physical_block_id} 在不完整时计算了哈希值"
       token_ids   = seq.block(seq.num_blocks - 1)
-      prefix_hash = block_table[seq.block_table[-2]].hash if len(seq.block_table) > 1 else -1
+      prefix_hash = self.blocks[block_table[-2]].hash if len(block_table) > 1 else -1
       hash        = self.compute_hash(token_ids, prefix_hash)
       last_block.update(hash, token_ids)
       self.hash_to_block_id[hash] = last_physical_block_id
