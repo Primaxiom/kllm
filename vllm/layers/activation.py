@@ -9,7 +9,6 @@ Qwen3 MLP 模块中 Silu 和矩阵乘法的结合算子
 前向: 将输入平分, 代入公式
 输出: 待进行下采样的张量
 '''
-
   def __init__(self):
     super().__init__()
 
@@ -17,6 +16,15 @@ Qwen3 MLP 模块中 Silu 和矩阵乘法的结合算子
   def forward(self, x: Tensor) -> Tensor:
     x, y = x.chunk(2, -1)
     return F.silu(x) * y
+
+class GELUTanhAndMul(nn.Module):
+  def __init__(self):
+    super().__init__()
+
+  @torch.compile
+  def forward(self, x: Tensor) -> Tensor:
+    x, y = x.chunk(2, -1)
+    return F.gelu(x, approximate="tanh") * y
 
 if __name__ == "__main__":
   layer = SiluAndMul().cuda()
