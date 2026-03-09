@@ -20,6 +20,18 @@ class Scheduler:
   def add_seq(self, seq: Sequence):
     self.waiting_seqs.append(seq)
 
+  def finish_seq(self, seq: Sequence):
+    if seq.status == SequenceStatus.FINISHED:
+      return
+    if seq.status == SequenceStatus.WAITING:
+      self.waiting_seqs.remove(seq)
+    elif seq.status == SequenceStatus.RUNNING:
+      self.running_seqs.remove(seq)
+    else:
+      raise ValueError(f"未知的序列状态: {seq.status}")
+    self.block_manager.deallocate(seq)
+    seq.status = SequenceStatus.FINISHED
+
   def preempt(self, seq: Sequence):
     assert seq.status == SequenceStatus.RUNNING, f"序列 {seq.seq_id} 在非 RUNNING 状态下被抢占"
     seq.status = SequenceStatus.WAITING
@@ -65,9 +77,12 @@ class Scheduler:
   def postprocess(self, seqs: list[Sequence], token_ids: list[int]):
     for seq, token_id in zip(seqs, token_ids):
       seq.append_token(token_id)
-      if not seq.ignore_eos and token_id == self.eos \
-          or seq.num_completion_tokens >= seq.max_tokens \
-          or seq.num_completion_tokens >= self.max_model_len:
-        seq.status = SequenceStatus.FINISHED
-        self.block_manager.deallocate(seq)
-        self.running_seqs.remove(seq)
+      if not seq.ignore_eos and token_id == self.eos:
+        finish_reason = "stop"
+      elif seq.num_completion_tokens >= seq.max_tokens or seq.num_completion_tokens >= self.max_model_len:
+        finish_reason = "length"
+      else:
+        finish_reason = None
+      if finish_reason is not None:
+        seq.finish_reason = finish_reason
+        self.finish_seq(seq)
