@@ -12,6 +12,7 @@ from vllm.layers.layer_normalization import GemmaRMSNorm
 from vllm.layers.rotary_embedding import get_rope
 from vllm.layers.attention import Attention
 from vllm.layers.embedding import VocabParallelEmbedding, ParallelLMHead
+from vllm.models import register_model
 
 class Gemma3MLP(nn.Module):
   def __init__(
@@ -184,7 +185,8 @@ class Gemma3Model(nn.Module):
     for layer in self.layers: x, residual = layer(x, positions, residual)
     x, residual = self.norm(x, residual)
     return x
-  
+
+@register_model("gemma3_text")
 class Gemma3ForCausalLM(nn.Module):
   packed_modules_mapping: dict[str, tuple[str, int | str]] = {
     "q_proj": ("qkv_proj", "q"),

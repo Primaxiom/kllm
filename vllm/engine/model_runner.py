@@ -8,7 +8,7 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 
 from vllm.config import Config
-from vllm.models.qwen3 import Qwen3ForCausalLM
+from vllm.models import get_model
 from vllm.utils.loader import load_model
 from vllm.layers.sampler import Sampler
 from vllm.engine.sequence import Sequence
@@ -35,7 +35,7 @@ class ModelRunner:
     torch.set_default_dtype(hf_config.dtype)
     torch.set_default_device("cuda")
 
-    self.model = Qwen3ForCausalLM(hf_config)
+    self.model = get_model(hf_config)
     load_model(self.model, config.model)
     self.sampler = Sampler()
     self.warmup_model()

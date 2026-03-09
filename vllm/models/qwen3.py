@@ -12,6 +12,7 @@ from vllm.layers.layer_normalization import LayerNormalization
 from vllm.layers.rotary_embedding import get_rope
 from vllm.layers.attention import Attention
 from vllm.layers.embedding import VocabParallelEmbedding, ParallelLMHead
+from vllm.models import register_model
 
 class Qwen3MLP(nn.Module):
   def __init__(
@@ -174,6 +175,7 @@ class Qwen3Model(nn.Module):
     x, residual = self.norm(x, residual)
     return x
   
+@register_model("qwen3")
 class Qwen3ForCausalLM(nn.Module):
   packed_modules_mapping: dict[str, tuple[str, int | str]] = {
     "q_proj": ("qkv_proj", "q"),
