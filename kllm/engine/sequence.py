@@ -2,7 +2,7 @@ from copy import copy
 from enum import Enum, auto
 from itertools import count
 
-from vllm.sampling_parameters import SamplingParams
+from kllm.sampling_parameters import SamplingParams
 
 class SequenceStatus(Enum):
   WAITING   = auto()

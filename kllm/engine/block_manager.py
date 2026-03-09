@@ -3,7 +3,7 @@ from collections import deque
 import xxhash
 import numpy as np
 
-from vllm.engine.sequence import Sequence
+from kllm.engine.sequence import Sequence
 
 class Block:
   def __init__(

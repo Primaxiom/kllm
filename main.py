@@ -2,8 +2,8 @@ import os
 
 from transformers import AutoTokenizer
 
-from vllm.engine.llm_engine import LLMEngine
-from vllm.sampling_parameters import SamplingParams
+from kllm.engine.llm_engine import LLMEngine
+from kllm.sampling_parameters import SamplingParams
 
 
 def main():

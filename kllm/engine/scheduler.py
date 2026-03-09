@@ -1,8 +1,8 @@
 from collections import deque
 
-from vllm.config import Config
-from vllm.engine.sequence import Sequence, SequenceStatus
-from vllm.engine.block_manager import BlockManager
+from kllm.config import Config
+from kllm.engine.sequence import Sequence, SequenceStatus
+from kllm.engine.block_manager import BlockManager
 
 class Scheduler:
   def __init__(self, cfg: Config):

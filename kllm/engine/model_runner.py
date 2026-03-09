@@ -7,12 +7,12 @@ from torch import cuda, Tensor
 from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 
-from vllm.config import Config
-from vllm.models import get_model
-from vllm.utils.loader import load_model
-from vllm.layers.sampler import Sampler
-from vllm.engine.sequence import Sequence
-from vllm.utils.context import set_context, reset_context, get_context
+from kllm.config import Config
+from kllm.models import get_model
+from kllm.utils.loader import load_model
+from kllm.layers.sampler import Sampler
+from kllm.engine.sequence import Sequence
+from kllm.utils.context import set_context, reset_context, get_context
 
 class ModelRunner:
   def __init__(

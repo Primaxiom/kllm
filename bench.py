@@ -2,8 +2,8 @@ import os
 import time
 from random import randint, seed
 
-from vllm.engine.llm_engine import LLMEngine
-from vllm.sampling_parameters import SamplingParams
+from kllm.engine.llm_engine import LLMEngine
+from kllm.sampling_parameters import SamplingParams
 
 def main():
   seed(0)
@@ -12,7 +12,8 @@ def main():
   max_ouput_len = 1024
 
   os.environ["USE_LIBUV"] = "0"
-  path = os.path.expanduser("~/Qwen3-0.6B/")
+  model_name = "gemma-3-1b-pt" # "Qwen3-0.6B"
+  path = os.path.expanduser(f"~/{model_name}/")
   llm = LLMEngine(path, enforce_eager=False, max_model_len=4096)
 
   prompt_token_ids = [[randint(0, 10000) for _ in range(randint(100, max_input_len))] for _ in range(num_seqs)]

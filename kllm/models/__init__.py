@@ -21,5 +21,5 @@ def get_model(config: PretrainedConfig) -> nn.Module:
 def get_supported_models() -> list[str]:
   return list(_MODEL_REGISTRY.keys())
 
-from vllm.models.qwen3 import Qwen3ForCausalLM
-from vllm.models.gemma3 import Gemma3ForCausalLM
+from kllm.models.qwen3 import Qwen3ForCausalLM
+from kllm.models.gemma3 import Gemma3ForCausalLM

@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, distributed as dist, Tensor
 
-from vllm.utils.context import get_context
+from kllm.utils.context import get_context
 
 class VocabParallelEmbedding(nn.Module):
   '''

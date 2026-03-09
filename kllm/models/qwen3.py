@@ -4,17 +4,17 @@ if __name__ == "__main__":
 
 import torch
 from torch import nn, Tensor, distributed as dist
-from transformers import Gemma3TextConfig
+from transformers import Qwen3Config
 
-from vllm.layers.activation import GELUTanhAndMul
-from vllm.layers.linear import MergedColumnParallelLinear, RowParallelLinear, QKVColumnParallelLinear
-from vllm.layers.layer_normalization import GemmaRMSNorm
-from vllm.layers.rotary_embedding import get_rope
-from vllm.layers.attention import Attention
-from vllm.layers.embedding import VocabParallelEmbedding, ParallelLMHead
-from vllm.models import register_model
+from kllm.layers.activation import SiluAndMul
+from kllm.layers.linear import MergedColumnParallelLinear, RowParallelLinear, QKVColumnParallelLinear
+from kllm.layers.layer_normalization import LayerNormalization
+from kllm.layers.rotary_embedding import get_rope
+from kllm.layers.attention import Attention
+from kllm.layers.embedding import VocabParallelEmbedding, ParallelLMHead
+from kllm.models import register_model
 
-class Gemma3MLP(nn.Module):
+class Qwen3MLP(nn.Module):
   def __init__(
     self,
     hidden_size:        int,
@@ -25,7 +25,7 @@ class Gemma3MLP(nn.Module):
       input_size      = hidden_size,
       output_sizes    = [intermediate_size] * 2,
     )
-    self.act_fn       = GELUTanhAndMul()
+    self.act_fn       = SiluAndMul()
     self.down_proj    = RowParallelLinear(
       input_size      = intermediate_size,
       output_size     = hidden_size
@@ -37,19 +37,18 @@ class Gemma3MLP(nn.Module):
     x = self.down_proj(x)
     return x
   
-class Gemma3Attention(nn.Module):
+class Qwen3Attention(nn.Module):
   def __init__(
     self,
-    hidden_size:    int,
-    num_heads:      int,
-    num_kv_heads:   int | None = None,
-    head_dim:       int | None = None,
-    scale:          float | None = None,
-    qkv_bias:       bool = False,
-    rms_norm_eps:   float = 1e-06,
-    rope_theta:     float = 10000,
-    max_position:   int = 128 * 1024,
-    sliding_window: int | None = None,
+    hidden_size:  int,
+    num_heads:    int,
+    num_kv_heads: int | None = None,
+    head_dim:     int | None = None,
+    scale:        float | None = None,
+    qkv_bias:     bool = False,
+    rms_norm_eps: float = 1e-06,
+    rope_theta:   float = 10000,
+    max_position: int = 128 * 1024,
   ):
     super().__init__()
 
@@ -65,7 +64,7 @@ class Gemma3Attention(nn.Module):
     self.num_heads    = self.total_num_heads    // tp_size
     self.num_kv_heads = self.total_num_kv_heads // tp_size
 
-    self.scale        = scale if scale is not None else self.head_dim ** -0.5
+    self.scale        = scale if scale else self.head_dim ** -0.5
     self.q_size       = self.head_dim * self.num_heads
     self.kv_size      = self.head_dim * self.num_kv_heads
     self.qkv_bias     = qkv_bias
@@ -79,8 +78,8 @@ class Gemma3Attention(nn.Module):
     )
 
     if not qkv_bias:
-      self.q_norm     = GemmaRMSNorm(self.head_dim, rms_norm_eps)
-      self.k_norm     = GemmaRMSNorm(self.head_dim, rms_norm_eps)
+      self.q_norm     = LayerNormalization(self.head_dim, rms_norm_eps)
+      self.k_norm     = LayerNormalization(self.head_dim, rms_norm_eps)
 
     self.rotary_emb   = get_rope(
       base            = rope_theta,
@@ -93,7 +92,6 @@ class Gemma3Attention(nn.Module):
       head_dim        = self.head_dim, 
       scale           = self.scale, 
       num_kv_heads    = self.total_num_kv_heads,
-      window_size     = (sliding_window, 0) if (sliding_window is not None) else (-1, -1)
     )
 
     self.o_proj       = RowParallelLinear(
@@ -121,33 +119,29 @@ class Gemma3Attention(nn.Module):
 
     return o
 
-class Gemma3DecoderLayer(nn.Module):
+class Qwen3DecoderLayer(nn.Module):
   def __init__(
     self,
-    cfg:        Gemma3TextConfig,
-    layer_type: str,
+    cfg:  Qwen3Config
   ):
     super().__init__()
-    self.input_layernorm  = GemmaRMSNorm(cfg.hidden_size, cfg.rms_norm_eps)
-    self.self_attn        = Gemma3Attention(
+    self.input_layernorm  = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
+    self.self_attn        = Qwen3Attention(
       cfg.hidden_size,
       cfg.num_attention_heads,
       cfg.num_key_value_heads,
       cfg.head_dim,
-      cfg.query_pre_attn_scalar ** -0.5,
+      None,
       cfg.attention_bias,
       cfg.rms_norm_eps,
-      cfg.rope_parameters[layer_type]["rope_theta"],
+      cfg.rope_theta if hasattr(cfg, "rope_theta") else cfg.rope_parameters["rope_theta"],
       cfg.max_position_embeddings,
-      cfg.sliding_window if layer_type == "sliding_attention" else None,
     )
-    self.post_attention_layernorm   = GemmaRMSNorm(cfg.hidden_size, cfg.rms_norm_eps)
-    self.pre_feedforward_layernorm  = GemmaRMSNorm(cfg.hidden_size, cfg.rms_norm_eps)
-    self.mlp            = Gemma3MLP(
+    self.mlp            = Qwen3MLP(
       cfg.hidden_size,
       cfg.intermediate_size,
     )
-    self.post_feedforward_layernorm = GemmaRMSNorm(cfg.hidden_size, cfg.rms_norm_eps)
+    self.post_attention_layernorm = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
   
   def forward(
     self, 
@@ -157,37 +151,32 @@ class Gemma3DecoderLayer(nn.Module):
   ) -> tuple[Tensor, Tensor]:
     x, residual = self.input_layernorm(x, residual) if residual is not None else (self.input_layernorm(x), x)
     x           = self.self_attn(x, pos)
-    x           = self.post_attention_layernorm(x)
-    x, residual = self.pre_feedforward_layernorm(x, residual)
+    x, residual = self.post_attention_layernorm(x, residual)
     x           = self.mlp(x)
-    x           = self.post_feedforward_layernorm(x)
     return x, residual
 
-class Gemma3Model(nn.Module):
+class Qwen3Model(nn.Module):
   def __init__(
     self,
-    cfg:  Gemma3TextConfig
+    cfg:  Qwen3Config
   ):
     super().__init__()
     self.embed_tokens   = VocabParallelEmbedding(cfg.vocab_size, cfg.hidden_size)
-    self.layers         = nn.ModuleList([Gemma3DecoderLayer(cfg, layer_type) for layer_type in cfg.layer_types])
-    self.norm           = GemmaRMSNorm(cfg.hidden_size, cfg.rms_norm_eps)
-    normalizer          = cfg.hidden_size ** 0.5
-    self.register_buffer("normalizer", torch.tensor(normalizer), persistent=False)
-
+    self.layers         = nn.ModuleList([Qwen3DecoderLayer(cfg) for _ in range(cfg.num_hidden_layers)])
+    self.norm           = LayerNormalization(cfg.hidden_size, cfg.rms_norm_eps)
+    
   def forward(
     self,
     input_ids: Tensor,
     positions: Tensor,
   ) -> Tensor:
-    x = self.embed_tokens(input_ids)
-    x, residual = x * self.normalizer, None
+    x, residual = self.embed_tokens(input_ids), None
     for layer in self.layers: x, residual = layer(x, positions, residual)
     x, residual = self.norm(x, residual)
     return x
-
-@register_model("gemma3_text")
-class Gemma3ForCausalLM(nn.Module):
+  
+@register_model("qwen3")
+class Qwen3ForCausalLM(nn.Module):
   packed_modules_mapping: dict[str, tuple[str, int | str]] = {
     "q_proj": ("qkv_proj", "q"),
     "k_proj": ("qkv_proj", "k"),
@@ -195,14 +184,13 @@ class Gemma3ForCausalLM(nn.Module):
     "gate_proj": ("gate_up_proj", 0),
     "up_proj": ("gate_up_proj", 1),
   }
-  chat_template: str = "{% if messages[0]['role'] == 'system' %}{% set loop_messages = messages[1:] %}{% set system_message = messages[0]['content'] %}{% else %}{% set loop_messages = messages %}{% set system_message = false %}{% endif %}{% for message in loop_messages %}{% if (message['role'] == 'user') != (loop.index0 % 2 == 0) %}{{ raise_exception('Conversation roles must alternate user/assistant/user/assistant/...') }}{% endif %}{% if loop.index0 == 0 and system_message != false %}{% set content = '<<SYS>>\\n' + system_message + '\\n<</SYS>>\\n\\n' + message['content'] %}{% else %}{% set content = message['content'] %}{% endif %}{% if message['role'] == 'user' %}{{ bos_token + '[INST] ' + content.strip() + ' [/INST]' }}{% elif message['role'] == 'assistant' %}{{ ' ' + content.strip() + eos_token }}{% endif %}{% endfor %}"
 
   def __init__(
     self,
-    cfg:  Gemma3TextConfig
+    cfg:  Qwen3Config
   ):
     super().__init__()
-    self.model    = Gemma3Model(cfg)
+    self.model    = Qwen3Model(cfg)
     self.lm_head  = ParallelLMHead(cfg.vocab_size, cfg.hidden_size)
     if cfg.tie_word_embeddings:
       self.lm_head.weight.data = self.model.embed_tokens.weight.data
@@ -216,3 +204,26 @@ class Gemma3ForCausalLM(nn.Module):
   
   def compute_logits(self, x: Tensor) -> Tensor:
     return self.lm_head(x)
+
+if __name__ == "__main__":
+  if not dist.is_initialized():
+    dist.init_process_group(
+      backend="gloo", 
+      init_method="tcp://127.0.0.1:29500?use_libuv=False",
+      rank=0,
+      world_size=1,
+    )
+  cfg = Qwen3Config(
+    vocab_size=50257,
+    hidden_size=768,
+    intermediate_size=3072,
+    num_hidden_layers=2,
+    num_attention_heads=12,
+    num_key_value_heads=12,
+    head_dim=64,
+  )
+  model = Qwen3ForCausalLM(cfg)
+  model = model.cuda()
+  input_ids = torch.randint(0, 50257, (16,)).cuda()
+  positions = torch.arange(16).cuda()
+  output = model(input_ids, positions)

@@ -9,11 +9,11 @@ import torch.multiprocessing as mp
 from transformers import AutoTokenizer
 from tqdm import tqdm
 
-from vllm.config import Config
-from vllm.engine.model_runner import ModelRunner
-from vllm.engine.scheduler import Scheduler
-from vllm.engine.sequence import Sequence
-from vllm.sampling_parameters import SamplingParams
+from kllm.config import Config
+from kllm.engine.model_runner import ModelRunner
+from kllm.engine.scheduler import Scheduler
+from kllm.engine.sequence import Sequence
+from kllm.sampling_parameters import SamplingParams
 
 class LLMEngine:
   def __init__(self, model: str, **kwargs):
