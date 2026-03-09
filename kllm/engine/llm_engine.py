@@ -49,6 +49,12 @@ class LLMEngine:
     seq = Sequence(token_ids, sampling_params)
     self.scheduler.add_seq(seq)
 
+  def abort_request(self, seq_id: int):
+    seq = self.scheduler.get_seq(seq_id)
+    if seq:
+      seq.finish_reason = "abort"
+      self.scheduler.finish_seq(seq)
+
   def is_finished(self):
     return self.scheduler.is_finished()
 
