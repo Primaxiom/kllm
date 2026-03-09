@@ -1,4 +1,5 @@
 from collections import deque
+from typing import Optional
 
 from kllm.config import Config
 from kllm.engine.sequence import Sequence, SequenceStatus
@@ -6,19 +7,24 @@ from kllm.engine.block_manager import BlockManager
 
 class Scheduler:
   def __init__(self, cfg: Config):
-    self.eos                            = cfg.eos
-    self.max_model_len                  = cfg.max_model_len
-    self.max_num_seqs                   = cfg.max_num_seqs
-    self.max_num_batched_tokens         = cfg.max_num_batched_tokens
-    self.block_manager                  = BlockManager(cfg.num_kvcache_blocks, cfg.kvcache_block_size)
-    self.waiting_seqs: deque[Sequence]  = deque()
-    self.running_seqs: deque[Sequence]  = deque()
+    self.eos                                = cfg.eos
+    self.max_model_len                      = cfg.max_model_len
+    self.max_num_seqs                       = cfg.max_num_seqs
+    self.max_num_batched_tokens             = cfg.max_num_batched_tokens
+    self.block_manager: BlockManager        = BlockManager(cfg.num_kvcache_blocks, cfg.kvcache_block_size)
+    self.waiting_seqs:  deque[Sequence]     = deque[Sequence]()
+    self.running_seqs:  deque[Sequence]     = deque[Sequence]()
+    self.seqs:          dict[int, Sequence] = {}
 
   def is_finished(self) -> bool:
     return not self.waiting_seqs and not self.running_seqs
   
+  def get_seq(self, seq_id: int) -> Optional[Sequence]:
+    return self.seqs.get(seq_id, None)
+  
   def add_seq(self, seq: Sequence):
     self.waiting_seqs.append(seq)
+    self.seqs[seq.seq_id] = seq
 
   def finish_seq(self, seq: Sequence):
     if seq.status == SequenceStatus.FINISHED:
@@ -29,8 +35,9 @@ class Scheduler:
       self.running_seqs.remove(seq)
     else:
       raise ValueError(f"未知的序列状态: {seq.status}")
-    self.block_manager.deallocate(seq)
     seq.status = SequenceStatus.FINISHED
+    self.block_manager.deallocate(seq)
+    self.seqs.pop(seq.seq_id, None)
 
   def preempt(self, seq: Sequence):
     assert seq.status == SequenceStatus.RUNNING, f"序列 {seq.seq_id} 在非 RUNNING 状态下被抢占"
