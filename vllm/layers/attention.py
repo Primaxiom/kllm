@@ -60,14 +60,16 @@ class Attention(nn.Module):
     self,
     num_heads:    int,
     head_dim:     int,
-    scale:        float = 1.0,
-    num_kv_heads: int   = None,  
+    scale:        float           = 1.0,
+    num_kv_heads: int             = None,
+    window_size:  tuple[int, int] = (-1, -1),
   ):
     super().__init__()
     self.num_heads    = num_heads
     self.head_dim     = head_dim
     self.scale        = scale
     self.num_kv_heads = num_kv_heads if num_kv_heads is not None else num_heads
+    self.window_size  = window_size
     self.k_cache      = self.v_cache  \
                       = torch.tensor([])
   
@@ -94,7 +96,8 @@ class Attention(nn.Module):
         cu_seqlens_k=context.cu_seqlens_k,
         softmax_scale=self.scale, 
         causal=True, 
-        block_table=context.block_tables
+        block_table=context.block_tables,
+        window_size=self.window_size,
       )
     else:
       o = flash_attn_with_kvcache(
@@ -102,6 +105,7 @@ class Attention(nn.Module):
         cache_seqlens=context.context_lens, 
         block_table=context.block_tables, 
         softmax_scale=self.scale, 
-        causal=True
+        causal=True,
+        window_size=self.window_size,
       )
     return o
