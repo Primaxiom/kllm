@@ -31,6 +31,32 @@ RMSNorm(x) = (x / sqrt(mean(x²) + ε)) ⊙ γ
   def forward(self, x: Tensor, residual: Tensor | None = None) -> Tensor | tuple[Tensor, Tensor]:
     return self.rms_forward(x) if residual is None else self.residual_rms_forward(x, residual)
 
+class GemmaRMSNorm(nn.Module):
+  '''
+Gemma RMS Layer Normalization
+GemmaRMSNorm(x) = (x / sqrt(mean(x²) + ε)) ⊙ (1 + γ)
+与普通 RMSNorm 的区别: 使用 (1 + γ) 而不是 γ
+'''
+
+  def __init__(self, hidden_size: int, eps: float = 1e-5):
+    super().__init__()
+    self.weight = nn.Parameter(torch.zeros(hidden_size))
+    self.eps = eps
+
+  @torch.compile(dynamic=True)
+  def rms_forward(self, x: Tensor) -> Tensor:
+    # GemmaRMSNorm(x) = (x / sqrt(mean(x²) + ε)) ⊙ (1 + γ)
+    variance = x.pow(2).mean(dim=-1, keepdim=True) + self.eps
+    return x * torch.rsqrt(variance) * (1 + self.weight)
+
+  @torch.compile(dynamic=True)
+  def residual_rms_forward(self, x: Tensor, residual: Tensor) -> Tensor:
+    x += residual
+    return self.rms_forward(x), x
+
+  def forward(self, x: Tensor, residual: Tensor | None = None) -> Tensor | tuple[Tensor, Tensor]:
+    return self.rms_forward(x) if residual is None else self.residual_rms_forward(x, residual)
+
 if __name__ == "__main__":
   # Example usage
   x = torch.randn(8,4000,8000).cuda()
