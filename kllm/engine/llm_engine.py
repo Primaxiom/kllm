@@ -14,6 +14,7 @@ from kllm.engine.model_runner import ModelRunner
 from kllm.engine.scheduler import Scheduler
 from kllm.engine.sequence import Sequence
 from kllm.sampling_parameters import SamplingParams
+from kllm.engine.common import EngineStepResult
 
 class LLMEngine:
   def __init__(self, model: str, **kwargs):
@@ -51,13 +52,21 @@ class LLMEngine:
   def is_finished(self):
     return self.scheduler.is_finished()
 
-  def step(self) -> tuple[list[tuple[int, list[int]]], int, bool]:
+  def step(self) -> list[EngineStepResult]:
     seqs, is_prefill  = self.scheduler.schedule()
     token_ids         = self.model_runner.call("run", seqs, is_prefill)
     self.scheduler.postprocess(seqs, token_ids)
-    outputs           = [(seq.seq_id, seq.completion_token_ids) for seq in seqs]
-    num_tokens        = sum(len(seq) for seq in seqs) if is_prefill else len(seqs)
-    return outputs, num_tokens, is_prefill
+    outputs           = [
+      EngineStepResult(
+        seq_id                = seq.seq_id,
+        new_token_id          = seq.last_token,
+        is_finished           = seq.is_finished,
+        finish_reason         = seq.finish_reason,
+        num_prompt_tokens     = seq.num_prompt_tokens,
+        num_completion_tokens = seq.num_completion_tokens,
+      ) for seq in seqs
+    ]
+    return outputs
 
   def generate(
     self,
@@ -76,9 +85,11 @@ class LLMEngine:
     throughput: list[float]       = [.0, .0]
     while not self.is_finished():
       start = perf_counter()
-      step_outputs, num_tokens, is_prefill = self.step()
+      step_outputs = self.step()
       if use_tqdm:
         end = perf_counter()
+        is_prefill = step_outputs[0].num_completion_tokens <= 1
+        num_tokens = sum(o.num_prompt_tokens for o in step_outputs) if is_prefill else len(step_outputs)
         throughput[is_prefill] = num_tokens / (end - start)
         process_bar.set_postfix({
             "Prefill": f"{int(throughput[1])}tok/s",
