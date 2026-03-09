@@ -1,6 +1,7 @@
 from copy import copy
 from enum import Enum, auto
 from itertools import count
+from typing import Optional
 
 from kllm.sampling_parameters import SamplingParams
 
@@ -35,8 +36,9 @@ block_table:        分页 KV Cache 中的页表, 逻辑块到物理块的映射
       token_ids:        list[int],
       sampling_params:  SamplingParams = SamplingParams(),
   ):
-    self.seq_id = next(Sequence.counter)
-    self.status = SequenceStatus.WAITING
+    self.seq_id:        int             = next(Sequence.counter)
+    self.status:        SequenceStatus  = SequenceStatus.WAITING
+    self.finish_reason: Optional[str]   = None
 
     self.token_ids          = copy(token_ids) # 必须深拷贝, 保证不影响外部数据
     self.last_token         = token_ids[-1] if token_ids else None
