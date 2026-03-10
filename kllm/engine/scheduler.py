@@ -14,12 +14,12 @@ class Scheduler:
     self.block_manager: BlockManager        = BlockManager(cfg.num_kvcache_blocks, cfg.kvcache_block_size)
     self.waiting_seqs:  deque[Sequence]     = deque[Sequence]()
     self.running_seqs:  deque[Sequence]     = deque[Sequence]()
-    self.seqs:          dict[int, Sequence] = {}
+    self.seqs:          dict[str, Sequence] = {}
 
   def is_finished(self) -> bool:
     return not self.waiting_seqs and not self.running_seqs
   
-  def get_seq(self, seq_id: int) -> Optional[Sequence]:
+  def get_seq(self, seq_id: str) -> Optional[Sequence]:
     return self.seqs.get(seq_id, None)
   
   def add_seq(self, seq: Sequence):
