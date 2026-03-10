@@ -20,12 +20,12 @@ class EngineRequestBase(
   pass
 
 class EngineRequestAdd(EngineRequestBase):
-  seq_id:           int
+  seq_id:           str
   prompt_token_ids: list[int]
   sampling_params:  SamplingParams
 
 class EngineRequestAbort(EngineRequestBase):
-  seq_id:           int
+  seq_id:           str
 
 EngineRequest: TypeAlias = EngineRequestAdd | EngineRequestAbort
 

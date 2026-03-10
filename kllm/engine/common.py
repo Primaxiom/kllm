@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class EngineStepResult:
-  seq_id:                 int
+  seq_id:                 str
   new_token_id:           int
   is_finished:            bool
   finish_reason:          Optional[str]

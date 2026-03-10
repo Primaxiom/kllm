@@ -49,7 +49,7 @@ class LLMEngine:
     seq = Sequence(token_ids, sampling_params)
     self.scheduler.add_seq(seq)
 
-  def abort_request(self, seq_id: int):
+  def abort_request(self, seq_id: str):
     seq = self.scheduler.get_seq(seq_id)
     if seq:
       seq.finish_reason = "abort"
@@ -87,7 +87,7 @@ class LLMEngine:
     for prompt, params in zip(prompts, sampling_params):
       self.add_request(prompt, params)
     
-    outputs: dict[int, list[int]] = {}
+    outputs: dict[str, list[int]] = {}
     throughput: list[float]       = [.0, .0]
     while not self.is_finished():
       start = perf_counter()
