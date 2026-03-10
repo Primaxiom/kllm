@@ -40,7 +40,7 @@ class LLM:
   ) -> AsyncGenerator[GenerateOutput, None]:
     if seq_id is None:
       seq_id = uuid.uuid4().hex
-      
+
     try:
       prompt_token_ids: list[int]     = prompts if isinstance(prompts, list[int]) else self.tokenize([prompts])[0]
       request_state:    RequestState  = asyncio.Queue()
@@ -65,7 +65,28 @@ class LLM:
       raise
 
   async def output_processor(self):
-    pass
+    while True:
+      outputs = await asyncio.to_thread(self.client.get_output)
+      for output in outputs:
+        seq_id        = output.seq_id
+        if seq_id not in self.request_states:
+          continue
+
+        new_token_id  = output.new_token_id
+        token_str     = self.detokenize([[new_token_id]])[0]
+        is_finished   = output.is_finished
+        generate_output = GenerateOutput(
+          token_str,
+          is_finished,
+          output.finish_reason,
+          output.num_prompt_tokens      if is_finished else 0,
+          output.num_completion_tokens  if is_finished else 0,
+        )
+
+        request_state = self.request_states[seq_id]
+        request_state.put_nowait(generate_output)
+        if is_finished:
+          request_state.put_nowait(None)
 
   async def exit(self):
     self.output_processor_task.cancel()
