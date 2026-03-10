@@ -1,7 +1,7 @@
 from copy import copy
 from enum import Enum, auto
-from itertools import count
 from typing import Optional
+import uuid
 
 from kllm.sampling_parameters import SamplingParams
 
@@ -29,14 +29,14 @@ num_cached_tokens:  已缓存 token 的数量
 block_table:        分页 KV Cache 中的页表, 逻辑块到物理块的映射
 '''
   block_size: int   = 256
-  counter:    count = count()
 
   def __init__(
       self,
       token_ids:        list[int],
-      sampling_params:  SamplingParams = SamplingParams(),
+      sampling_params:  SamplingParams  = SamplingParams(),
+      seq_id:           Optional[str]   = None
   ):
-    self.seq_id:        int             = next(Sequence.counter)
+    self.seq_id:        str             = seq_id if seq_id is not None else uuid.uuid4()
     self.status:        SequenceStatus  = SequenceStatus.WAITING
     self.finish_reason: Optional[str]   = None
 
