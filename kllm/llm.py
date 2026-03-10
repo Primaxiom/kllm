@@ -1,21 +1,25 @@
 
 
+from typing import AsyncGenerator, Optional
+import uuid
+
 from transformers import AutoTokenizer, PreTrainedTokenizer
 import asyncio
 
 from kllm.config import Config
 from kllm.engine.engine_client import EngineClient
 from kllm.engine.common import GenerateOutput
+from kllm.sampling_parameters import SamplingParams
 
-RequestStates = dict[str, asyncio.Queue[GenerateOutput | None]]
+RequestState = asyncio.Queue[GenerateOutput | None]
 
 class LLM:
   def __init__(self, cfg: Config):
-    self.cfg                            = cfg
-    self.client                         = EngineClient(cfg)
-    self.tokenizer: PreTrainedTokenizer = AutoTokenizer.from_pretrained(cfg.model, trust_remote_code=True)
-    self.request_states: RequestStates  = {}
-    self.output_processor_task          = asyncio.create_task(self.output_processor())
+    self.cfg                                      = cfg
+    self.client                                   = EngineClient(cfg)
+    self.tokenizer:       PreTrainedTokenizer     = AutoTokenizer.from_pretrained(cfg.model, trust_remote_code=True)
+    self.request_states:  dict[str, RequestState] = {}
+    self.output_processor_task                    = asyncio.create_task(self.output_processor())
 
   def tokenize(self, prompts: list[str]) -> list[list[int]]:
     return self.tokenizer(prompts)["input_ids"]
@@ -23,13 +27,42 @@ class LLM:
   def detokenize(self, token_ids: list[list[int]]) -> list[str]:
     return self.tokenizer.batch_decode(token_ids, skip_special_tokens=True)
 
-  def abort(self, seq: str):
-    if seq in self.request_states:
-      self.client.abort_request(seq)
-      del self.request_states[seq]
+  def abort(self, seq_id: str):
+    if seq_id in self.request_states:
+      self.client.abort_request(seq_id)
+      del self.request_states[seq_id]
 
-  async def generate(self):
-    pass
+  async def generate(
+    self,
+    prompts:          str | list[int],
+    sampling_params:  SamplingParams,
+    seq_id:           Optional[str] = None,
+  ) -> AsyncGenerator[GenerateOutput, None]:
+    if seq_id is None:
+      seq_id = uuid.uuid4().hex
+      
+    try:
+      prompt_token_ids: list[int]     = prompts if isinstance(prompts, list[int]) else self.tokenize([prompts])[0]
+      request_state:    RequestState  = asyncio.Queue()
+      self.request_states[seq_id]     = request_state
+      self.client.add_request(
+        seq_id,
+        prompt_token_ids,
+        sampling_params
+      )
+
+      while True:
+        output = await request_state.get()
+        if output is None:
+          break
+        yield output
+      del self.request_states[seq_id]
+      print(f"请求 {seq_id} 生成完毕")
+
+    except (asyncio.CancelledError, GeneratorExit):
+      self.abort(seq_id)
+      print(f"请求 {seq_id} 生成中止")
+      raise
 
   async def output_processor(self):
     pass
