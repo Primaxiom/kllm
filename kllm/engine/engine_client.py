@@ -2,7 +2,6 @@ from typing import TypeAlias
 import multiprocessing as mp
 import atexit
 
-import msgpack
 import msgspec
 import zmq
 
@@ -63,6 +62,7 @@ class EngineClient:
     )
     self.engine_process.start()
 
+    self.is_active = True
     self.poller = zmq.Poller()
     self.poller.register(self.output_socket, zmq.POLLIN)
 
@@ -77,16 +77,38 @@ class EngineClient:
     pass
 
   def exit(self):
+    self.is_active = False
     p = self.engine_process
     p.terminate()
     p.join()
     self.input_socket.close()
 
-  def add_request(self):
-    pass
+  def add_request(
+    self,
+    seq_id:           str,
+    prompt_token_ids: list[int],
+    sampling_params:  SamplingParams,
+  ):
+    if self.is_active:
+      frames = msgspec.msgpack.encode(
+        EngineRequestAdd(
+          seq_id            = seq_id,
+          prompt_token_ids  = prompt_token_ids,
+          sampling_params   = sampling_params,
+        )
+      )
+      self.input_socket.send_multipart(frames, copy=False)
 
-  def abort_request(self):
-    pass
+  def abort_request(self, seq_id):
+    if self.is_active:
+      frames = msgspec.msgpack.encode(EngineRequestAbort(seq_id=seq_id))
+      self.input_socket.send_multipart(frames, copy=False)
 
-  def get_output(self):
-    pass
+  def get_output(self) -> list[EngineStepResult]:
+    while self.is_active:
+      sockets = dict(self.poller.poll(timeout=1000))
+      if self.output_socket in sockets:
+        frames  = self.output_socket.recv_multipart(flags=zmq.DONTWAIT, copy=False)
+        reply   = msgspec.msgpack.decode(frames, type=EngineReply)
+        assert isinstance(reply, EngineReply)
+        return reply.outputs
