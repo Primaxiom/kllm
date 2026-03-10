@@ -4,6 +4,7 @@ from multiprocessing.synchronize import Event
 from multiprocessing.context import SpawnProcess
 import atexit
 from time import perf_counter
+from typing import Optional
 
 import torch.multiprocessing as mp
 from transformers import AutoTokenizer
@@ -44,9 +45,14 @@ class LLMEngine:
     for process in self.processes:
       process.join()
 
-  def add_request(self, prompt: str | list[int], sampling_params: SamplingParams):
+  def add_request(
+    self, 
+    prompt:           str | list[int], 
+    sampling_params:  SamplingParams,
+    seq_id:           Optional[str] = None,
+  ):
     token_ids = self.tokenizer.encode(prompt) if isinstance(prompt, str) else prompt
-    seq = Sequence(token_ids, sampling_params)
+    seq = Sequence(token_ids, sampling_params, seq_id)
     self.scheduler.add_seq(seq)
 
   def abort_request(self, seq_id: str):

@@ -1,6 +1,9 @@
-from typing import TypeAlias
+from typing import TypeAlias, Optional
 import multiprocessing as mp
 import atexit
+import signal
+import queue
+import threading
 
 import msgspec
 import zmq
@@ -8,6 +11,7 @@ import zmq
 from kllm.engine.common import EngineStepResult
 from kllm.sampling_parameters import SamplingParams
 from kllm.config import Config
+from kllm.engine.llm_engine import LLMEngine
 
 class EngineRequestBase(
   msgspec.Struct,
@@ -74,7 +78,75 @@ class EngineClient:
     input_path: str,
     output_path: str,
   ):
-    pass
+    is_active:  bool                = True
+    engine:     Optional[LLMEngine] = None
+
+    def signal_handler(s, f):
+      if is_active:
+        raise SystemExit()
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT , signal_handler)
+
+    try:
+      zmq_ctx = zmq.Context()
+      input_queue:  queue.Queue[EngineRequest]  = queue.Queue()
+      output_queue: queue.Queue[EngineReply]    = queue.Queue()
+
+      def handle_input_socket():
+        input_socket = zmq_ctx.socket(zmq.PULL)
+        input_socket.connect(input_path)
+        while True:
+          frames  = input_socket.recv_multipart(copy=False)
+          request = msgspec.msgpack.decode(frames)
+          assert isinstance(request, EngineRequest)
+          input_queue.put_nowait(request)
+
+      def handle_output_socket():
+        output_socket = zmq_ctx.socket(zmq.PUSH)
+        output_socket.connect(output_path)
+        while True:
+          reply   = output_queue.get()
+          frames  = msgspec.msgpack.encode(reply)
+          output_socket.send_multipart(frames, copy=False)
+
+      input_thread  = threading.Thread(target=handle_input_socket , daemon=True)
+      output_thread = threading.Thread(target=handle_output_socket, daemon=True)
+      input_thread  .start()
+      output_thread .start()
+
+      engine = LLMEngine(**cfg)
+
+      def handle_engine_request(request: EngineRequest):
+        if isinstance(request, EngineRequestAdd):
+          engine.add_request(
+            request.prompt_token_ids, 
+            request.sampling_params,
+            request.seq_id
+          )
+        elif isinstance(request, EngineRequestAbort):
+          engine.abort_request(request.seq_id)
+        else:
+          raise ValueError(f"未知的引擎请求: {request}")
+
+      while is_active:
+        if not engine.is_finished():
+          handle_engine_request(input_queue.get())
+        while not input_queue.empty():
+          handle_engine_request(input_queue.get_nowait())
+        outputs = engine.step()
+        if outputs:
+          output_queue.put_nowait(EngineReply(outputs=outputs))
+
+    except SystemExit:
+      print(f"")
+    except Exception as e:
+      print(f"引擎异常: {e}")
+      if engine is None:
+        print(f"引擎启动失败")
+    finally:
+      is_active = False
+      if engine:
+        engine.exit()
 
   def exit(self):
     self.is_active = False
