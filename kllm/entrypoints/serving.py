@@ -112,10 +112,17 @@ class OpenAIServingCompletion(OpenAIServing):
     assert finish_reason == "stop" or finish_reason == "length"
 
     choice  = CompletionResponseStreamChoice(index=0, text="", finish_reason=finish_reason)
+    usage   = UsageInfo(
+      prompt_tokens     = res.num_prompt_tokens, 
+      completion_tokens = res.num_completion_tokens, 
+      total_tokens      = res.num_prompt_tokens + res.num_completion_tokens
+    )
     chunk   = CompletionStreamResponse(
       id      = request_id,
       created = created,
       model   = request.model,
       choices = [choice],
+      usage   = usage,
     )
     yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
+    yield "data: [DONE]\n\n"
