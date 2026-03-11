@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from typing import TypeAlias, Optional
 import multiprocessing as mp
 import atexit
@@ -69,8 +70,10 @@ class EngineClient:
     self.is_active = True
     self.poller = zmq.Poller()
     self.poller.register(self.output_socket, zmq.POLLIN)
-
-    atexit.register(self.exit)
+    while self.output_socket not in dict(self.poller.poll(timeout=2000)):
+      pass
+    print(f"启动成功 (?)")
+    self.start_engine_monitor()
 
   @staticmethod
   def run_engine_loop(
@@ -97,7 +100,7 @@ class EngineClient:
         input_socket.connect(input_path)
         while True:
           frames  = input_socket.recv_multipart(copy=False)
-          request = msgspec.msgpack.decode(frames)
+          request = msgspec.msgpack.decode(frames[0], type=EngineRequest)
           assert isinstance(request, EngineRequest)
           input_queue.put_nowait(request)
 
@@ -106,15 +109,16 @@ class EngineClient:
         output_socket.connect(output_path)
         while True:
           reply   = output_queue.get()
-          frames  = msgspec.msgpack.encode(reply)
+          frames  = [msgspec.msgpack.encode(reply)]
           output_socket.send_multipart(frames, copy=False)
 
       input_thread  = threading.Thread(target=handle_input_socket , daemon=True)
       output_thread = threading.Thread(target=handle_output_socket, daemon=True)
       input_thread  .start()
       output_thread .start()
+      output_queue.put_nowait(EngineReply([]))
 
-      engine = LLMEngine(**cfg)
+      engine = LLMEngine(**asdict(cfg))
 
       def handle_engine_request(request: EngineRequest):
         if isinstance(request, EngineRequestAdd):
@@ -129,7 +133,7 @@ class EngineClient:
           raise ValueError(f"未知的引擎请求: {request}")
 
       while is_active:
-        if not engine.is_finished():
+        if engine.is_finished():
           handle_engine_request(input_queue.get())
         while not input_queue.empty():
           handle_engine_request(input_queue.get_nowait())
@@ -138,7 +142,7 @@ class EngineClient:
           output_queue.put_nowait(EngineReply(outputs=outputs))
 
     except SystemExit:
-      print(f"")
+      print(f"Ctrl + C")
     except Exception as e:
       print(f"引擎异常: {e}")
       if engine is None:
@@ -150,10 +154,15 @@ class EngineClient:
 
   def exit(self):
     self.is_active = False
+    print(f"self.is_active 为 {self.is_active}")
     p = self.engine_process
+    print(f"engine 所在进程 {p.pid}")
     p.terminate()
+    print(f"engine 正在关闭")
     p.join()
+    print(f"engine 已关闭")
     self.input_socket.close()
+    print(f"input_socket 已关闭")
 
   def add_request(
     self,
@@ -162,25 +171,49 @@ class EngineClient:
     sampling_params:  SamplingParams,
   ):
     if self.is_active:
-      frames = msgspec.msgpack.encode(
+      frames = [msgspec.msgpack.encode(
         EngineRequestAdd(
           seq_id            = seq_id,
           prompt_token_ids  = prompt_token_ids,
           sampling_params   = sampling_params,
         )
-      )
+      )]
       self.input_socket.send_multipart(frames, copy=False)
 
   def abort_request(self, seq_id):
     if self.is_active:
-      frames = msgspec.msgpack.encode(EngineRequestAbort(seq_id=seq_id))
+      frames = [msgspec.msgpack.encode(EngineRequestAbort(seq_id=seq_id))]
       self.input_socket.send_multipart(frames, copy=False)
 
   def get_output(self) -> list[EngineStepResult]:
-    while self.is_active:
+    while self.is_active == True:
       sockets = dict(self.poller.poll(timeout=1000))
       if self.output_socket in sockets:
         frames  = self.output_socket.recv_multipart(flags=zmq.DONTWAIT, copy=False)
-        reply   = msgspec.msgpack.decode(frames, type=EngineReply)
+        reply   = msgspec.msgpack.decode(frames[0], type=EngineReply)
         assert isinstance(reply, EngineReply)
         return reply.outputs
+      
+  def start_engine_monitor(self):
+    import weakref
+    from multiprocessing.connection import wait
+    if not hasattr(self, "engine_process") or not self.engine_process:
+        raise RuntimeError("Engine process has not been started.")
+    # Avoid circular references
+    weak_self = weakref.ref(self)
+
+    def engine_dead_monitor():
+        print(f"engine_dead_monitor 已启动")
+        _died = wait([self.engine_process.sentinel])
+        print(f"engine_dead_monitor 已触发")
+        self_ref = weak_self()
+        if not self_ref:
+            return
+        self_ref.exit()
+
+    self.dead_monitor_thread = threading.Thread(
+        target=engine_dead_monitor,
+        name="engine-dead-monitor",
+        daemon=True,
+    )
+    self.dead_monitor_thread.start()

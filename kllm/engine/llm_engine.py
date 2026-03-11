@@ -40,20 +40,23 @@ class LLMEngine:
     atexit.register(self.exit)
 
   def exit(self):
-    self.model_runner.call("exit")
-    del self.model_runner
-    for process in self.processes:
-      process.join()
+    if hasattr(self, "model_runner"):
+      self.model_runner.call("exit")
+      del self.model_runner
+    if hasattr(self, "processes"):
+      for process in self.processes:
+        process.join()
 
   def add_request(
     self, 
     prompt:           str | list[int], 
     sampling_params:  SamplingParams,
     seq_id:           Optional[str] = None,
-  ):
+  ) -> str:
     token_ids = self.tokenizer.encode(prompt) if isinstance(prompt, str) else prompt
     seq = Sequence(token_ids, sampling_params, seq_id)
     self.scheduler.add_seq(seq)
+    return seq.seq_id
 
   def abort_request(self, seq_id: str):
     seq = self.scheduler.get_seq(seq_id)
@@ -85,13 +88,15 @@ class LLMEngine:
     prompts:          list[str]       | list[list[int]],
     sampling_params:  SamplingParams  | list[SamplingParams],
     use_tqdm: bool = True,
-  ) -> list[str]:
+  ) -> list[dict[str, any]]:
+    seq_ids = []
     if use_tqdm:
       process_bar = tqdm(total=len(prompts), desc="生成中", dynamic_ncols=True)
     if not isinstance(sampling_params, list):
       sampling_params = [sampling_params] * len(prompts)
     for prompt, params in zip(prompts, sampling_params):
-      self.add_request(prompt, params)
+      seq_id = self.add_request(prompt, params)
+      seq_ids.append(seq_id)
     
     outputs: dict[str, list[int]] = {}
     throughput: list[float]       = [.0, .0]
@@ -108,12 +113,15 @@ class LLMEngine:
             "Decode" : f"{int(throughput[0])}tok/s",
         })
 
-      for seq_id, token_ids in step_outputs:
-        outputs[seq_id] = token_ids
+      for step_result in step_outputs:
+        seq_id, token_id = step_result.seq_id, step_result.new_token_id
+        if seq_id not in outputs:
+          outputs[seq_id] = []
+        outputs[seq_id].append(token_id)
         if use_tqdm:
           process_bar.update(1)
 
-    outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
+    outputs = [outputs[seq_id] for seq_id in seq_ids]
     outputs = [
       {
         "text": self.tokenizer.decode(token_ids),
