@@ -9,9 +9,10 @@ from kllm.sampling_parameters import SamplingParams
 def main():
   os.environ["USE_LIBUV"] = "0"
   # path = os.path.expanduser("~/.cache/huggingface/hub/models--Qwen--Qwen3-0.6B")
-  path = "Qwen/Qwen3-0.6B"
+  model_name = "Qwen3-0.6B"
+  path = os.path.expanduser(f"~/{model_name}/")
   tokenizer = AutoTokenizer.from_pretrained(path)
-  llm = LLMEngine(path, enforce_eager=True, tensor_parallel_size=1)
+  llm = LLMEngine(path, enforce_eager=False, tensor_parallel_size=1)
 
   sampling_params = SamplingParams(temperature=0.6, max_tokens=256)
   prompts = [
