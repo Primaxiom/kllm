@@ -4,7 +4,7 @@ from typing import AsyncGenerator
 from fastapi.responses import StreamingResponse
 
 from kllm.llm import LLM
-from kllm.entrypoints.protocol import CompletionRequest, CompletionResponse, CompletionResponseChoice, UsageInfo
+from kllm.entrypoints.protocol import CompletionRequest, CompletionResponse, CompletionResponseChoice, CompletionResponseStreamChoice, CompletionStreamResponse, UsageInfo
 from kllm.sampling_parameters import SamplingParams
 
 class OpenAIServing:
@@ -21,7 +21,10 @@ class OpenAIServing:
     return sampling_params
 
   async def _generate_full(
-    self, prompt: str, sampling_params: SamplingParams, request_id: str
+    self, 
+    prompt:           str, 
+    sampling_params:  SamplingParams, 
+    request_id:       str
   ):
     text_outputs              = ["" for _ in range(1)]
     finish_reason: str | None = None
@@ -38,11 +41,10 @@ class OpenAIServing:
     return text_outputs, finish_reason, num_prompt_tokens, num_completion_tokens
   
 class OpenAIServingCompletion(OpenAIServing):
-  async def create_completion(self, request: CompletionRequest):
+  async def create_completion(self, request: CompletionRequest) -> CompletionResponse | StreamingResponse:
     create_time_ns  = time.time_ns()
     create_time_sec = create_time_ns // 1_000_000_000
     request_id      = f"cmpl-{create_time_ns}"
-    sampling_params = self._extract_sampling_params(request)
     prompt          = request.prompt
 
     if request.stream:
@@ -56,10 +58,16 @@ class OpenAIServingCompletion(OpenAIServing):
         media_type="text/event-stream",
       )
     
+    sampling_params = self._extract_sampling_params(request)
     text_outputs, finish_reason, num_prompt_tokens, num_completion_tokens = await self._generate_full(prompt, sampling_params, request_id)
     assert finish_reason == "stop" or finish_reason == "length"
-    choices = [CompletionResponseChoice(0, text_outputs[0], finish_reason)]
-    usage   = UsageInfo(num_prompt_tokens, num_completion_tokens, num_prompt_tokens + num_completion_tokens)
+
+    choices = [CompletionResponseChoice(index=0, text=text_outputs[0], finish_reason=finish_reason)]
+    usage   = UsageInfo(
+      prompt_tokens     = num_prompt_tokens, 
+      completion_tokens = num_completion_tokens, 
+      total_tokens      = num_prompt_tokens + num_completion_tokens
+    )
     return CompletionResponse(
       id      = request_id,
       created = create_time_sec,
@@ -75,4 +83,39 @@ class OpenAIServingCompletion(OpenAIServing):
     request_id: str,
     created:    int,
   ) -> AsyncGenerator[str, None]:
-    pass
+    sampling_params = self._extract_sampling_params(request)
+
+    choice  = CompletionResponseStreamChoice(index=0, text="", finish_reason=None)
+    chunk   = CompletionStreamResponse(
+      id      = request_id,
+      created = created,
+      model   = request.model,
+      choices = [choice],
+    )
+    yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
+
+    finish_reason = None
+    async for res in self.engine.generate(prompt, sampling_params, request_id):
+      for i in range(1):
+        if res.is_finished:
+          finish_reason = res.finish_reason
+        choice  = CompletionResponseStreamChoice(index=0, text=res.token_str, finish_reason=None)
+        chunk   = CompletionStreamResponse(
+          id      = request_id,
+          created = created,
+          model   = request.model,
+          choices = [choice],
+        )
+        yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
+
+    finish_reason         = res.finish_reason.lower() if res.finish_reason else None
+    assert finish_reason == "stop" or finish_reason == "length"
+
+    choice  = CompletionResponseStreamChoice(index=0, text="", finish_reason=finish_reason)
+    chunk   = CompletionStreamResponse(
+      id      = request_id,
+      created = created,
+      model   = request.model,
+      choices = [choice],
+    )
+    yield f"data: {chunk.model_dump_json(exclude_unset=True)}\n\n"
