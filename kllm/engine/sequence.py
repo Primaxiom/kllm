@@ -36,7 +36,7 @@ block_table:        分页 KV Cache 中的页表, 逻辑块到物理块的映射
       sampling_params:  SamplingParams  = SamplingParams(),
       seq_id:           Optional[str]   = None
   ):
-    self.seq_id:        str             = seq_id if seq_id is not None else uuid.uuid4()
+    self.seq_id:        str             = seq_id if seq_id is not None else uuid.uuid4().hex
     self.status:        SequenceStatus  = SequenceStatus.WAITING
     self.finish_reason: Optional[str]   = None
 

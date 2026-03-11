@@ -86,7 +86,7 @@ class Scheduler:
       seq.append_token(token_id)
       if not seq.ignore_eos and token_id == self.eos:
         finish_reason = "stop"
-      elif seq.num_completion_tokens >= seq.max_tokens or seq.num_completion_tokens >= self.max_model_len:
+      elif seq.num_completion_tokens >= seq.max_tokens or len(seq) >= self.max_model_len:
         finish_reason = "length"
       else:
         finish_reason = None
